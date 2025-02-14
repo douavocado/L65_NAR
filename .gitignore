@@ -17,3 +17,7 @@ venv/
 # Editors
 .idea
 .vscode
+
+# weights and datasets
+checkpoints/**
+downloads/CLRS30/**

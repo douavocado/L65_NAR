@@ -31,7 +31,7 @@ from clrs._src import specs
 import haiku as hk
 import jax
 import jax.numpy as jnp
-
+from copy import deepcopy
 
 _Array = chex.Array
 _DataPoint = probing.DataPoint
@@ -87,6 +87,7 @@ class Net(hk.Module):
       nb_msg_passing_steps=1,
       debug=False,
       name: str = 'net',
+      get_inter:bool = False,
   ):
     """Constructs a `Net`."""
     super().__init__(name=name)
@@ -104,6 +105,7 @@ class Net(hk.Module):
     self.encoder_init = encoder_init
     self.nb_msg_passing_steps = nb_msg_passing_steps
     self.debug = debug
+    self.get_inter = get_inter
 
   def _msg_passing_step(self,
                         mp_state: _MessagePassingScanState,
@@ -119,7 +121,7 @@ class Net(hk.Module):
                         encs: Dict[str, List[hk.Module]],
                         decs: Dict[str, Tuple[hk.Module]],
                         return_hints: bool,
-                        return_all_outputs: bool
+                        return_all_outputs: bool,
                         ):
     if self.decode_hints and not first_step:
       assert self._hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
@@ -168,7 +170,7 @@ class Net(hk.Module):
         inputs, cur_hint, mp_state.hiddens,
         batch_size, nb_nodes, mp_state.lstm_state,
         spec, encs, decs, repred)
-
+    # print(hiddens.shape)
     if first_step:
       output_preds = output_preds_cand
     else:
@@ -292,12 +294,23 @@ class Net(hk.Module):
           self._msg_passing_step,
           first_step=False,
           **common_args)
-
-      output_mp_state, accum_mp_state = hk.scan(
-          scan_fn,
-          mp_state,
-          jnp.arange(nb_mp_steps - 1) + 1,
-          length=nb_mp_steps - 1)
+      
+      if not repred:
+          output_mp_state, accum_mp_state = hk.scan(
+              scan_fn,
+              mp_state,
+              jnp.arange(nb_mp_steps - 1) + 1,
+              length=nb_mp_steps - 1)
+      else:
+          mpstate_hist = [deepcopy(mp_state)]
+          output_mp_state = mp_state
+          for j in range(1,nb_mp_steps):
+              output_mp_state, accum_mp_state =self._msg_passing_step(
+                  output_mp_state,
+                  i=j,
+                  first_step=False,
+                  **common_args)
+              mpstate_hist.append(deepcopy(output_mp_state))
 
     # We only return the last algorithm's output. That's because
     # the output only matters when a single algorithm is processed; the case
@@ -322,8 +335,10 @@ class Net(hk.Module):
     if self.debug:
       hiddens = jnp.stack([v for v in accum_mp_state.hiddens])
       return output_preds, hint_preds, hiddens
-
-    return output_preds, hint_preds
+    if self.get_inter:
+        return output_preds, hint_preds, mpstate_hist
+    else:
+        return output_preds, hint_preds
 
   def _construct_encoders_decoders(self):
     """Constructs encoders and decoders, separate for each algorithm."""
@@ -682,7 +697,7 @@ class NetChunked(Net):
           encs=self.encoders[algorithm_index],
           decs=self.decoders[algorithm_index],
           )
-
+      
       mp_state, scan_output = hk.scan(
           scan_fn,
           mp_state,

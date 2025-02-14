@@ -529,9 +529,11 @@ def main(unused_argv):
       nb_msg_passing_steps=FLAGS.nb_msg_passing_steps,
       )
 
+  dummy_traj = [next(t) for t in val_samplers]
   eval_model = clrs.models.BaselineModel(
       spec=spec_list,
-      dummy_trajectory=[next(t) for t in val_samplers],
+      dummy_trajectory=dummy_traj,
+      get_inter=True,
       **model_params
   )
 
@@ -549,7 +551,7 @@ def main(unused_argv):
   batch_size = feedback.outputs[0].data.shape[0]
   new_rng_key, rng_key = jax.random.split(rng_key)
   logging.info('Predicting')
-  cur_preds, _ = eval_model.predict(new_rng_key, feedback.features)
+  cur_preds, _, _ = eval_model.predict(new_rng_key, feedback.features)
   
   item = random.randint(0, batch_size)
   adj = feedback.features.inputs[3].data[item]

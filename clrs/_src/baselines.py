@@ -156,6 +156,7 @@ class BaselineModel(model.Model):
       name: str = 'base_model',
       nb_msg_passing_steps: int = 1,
       debug: bool = False,
+      get_inter:bool = False,
   ):
     """Constructor for BaselineModel.
 
@@ -211,7 +212,7 @@ class BaselineModel(model.Model):
       raise ValueError('`encode_hints=True`, `decode_hints=False` is invalid.')
 
     assert hint_repred_mode in ['soft', 'hard', 'hard_on_eval']
-
+    self.get_inter = get_inter
     self.decode_hints = decode_hints
     self.checkpoint_path = checkpoint_path
     self.name = name
@@ -257,7 +258,7 @@ class BaselineModel(model.Model):
                       dropout_prob, hint_teacher_forcing,
                       hint_repred_mode,
                       self.nb_dims, self.nb_msg_passing_steps,
-                      self.debug)(*args, **kwargs)
+                      self.debug, get_inter=self.get_inter)(*args, **kwargs)
 
     self.net_fn = hk.transform(_use_net)
     pmap_args = dict(axis_name='batch', devices=jax.local_devices())
@@ -328,6 +329,7 @@ class BaselineModel(model.Model):
   def _predict(self, params, rng_key: hk.PRNGSequence, features: _Features,
                algorithm_index: int, return_hints: bool,
                return_all_outputs: bool):
+    # print("get_inter", get_inter)
     net_outputs = self.net_fn.apply(
         params, rng_key, [features],
         repred=True, algorithm_index=algorithm_index,
@@ -336,7 +338,10 @@ class BaselineModel(model.Model):
     if self.debug:
       outs, hint_preds, hidden_states = net_outputs
     else:
-      outs, hint_preds = net_outputs
+      if True:
+        outs, hint_preds, mp_hist = net_outputs
+      else:
+        outs, hint_preds = net_outputs
     outs = decoders.postprocess(self._spec[algorithm_index],
                                 outs,
                                 sinkhorn_temperature=0.1,
@@ -346,7 +351,10 @@ class BaselineModel(model.Model):
     if self.debug:
       return outs, hint_preds, hidden_states
     else:
-      return outs, hint_preds
+      if self.get_inter:
+        return outs, hint_preds, mp_hist
+      else:
+        return outs, hint_preds
 
   def compute_grad(
       self,
@@ -388,12 +396,11 @@ class BaselineModel(model.Model):
   def predict(self, rng_key: hk.PRNGSequence, features: _Features,
               algorithm_index: Optional[int] = None,
               return_hints: bool = False,
-              return_all_outputs: bool = False):
+              return_all_outputs: bool = False,):
     """Model inference step."""
     if algorithm_index is None:
       assert len(self._spec) == 1
       algorithm_index = 0
-
     rng_keys = _maybe_pmap_rng_key(rng_key)  # pytype: disable=wrong-arg-types  # numpy-scalars
     features = _maybe_pmap_data(features)
     return _maybe_restack_from_pmap(
