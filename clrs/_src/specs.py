@@ -55,7 +55,6 @@ class Type:
   SHOULD_BE_PERMUTATION = 'should_be_permutation'
   PERMUTATION_POINTER = 'permutation_pointer'
   SOFT_POINTER = 'soft_pointer'
-  TEXT = 'text'
 
 
 class OutputClass:
@@ -404,7 +403,6 @@ SPECS = types.MappingProxyType({
         'pi_h': (Stage.HINT, Location.NODE, Type.POINTER),
         'd': (Stage.HINT, Location.NODE, Type.SCALAR),
         'msk': (Stage.HINT, Location.NODE, Type.MASK),
-        'labels': (Stage.HINT, Location.NODE, Type.TEXT)
     },
     'dag_shortest_paths': {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),

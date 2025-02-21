@@ -338,7 +338,7 @@ class BaselineModel(model.Model):
     if self.debug:
       outs, hint_preds, hidden_states = net_outputs
     else:
-      if True:
+      if self.get_inter:
         outs, hint_preds, mp_hist = net_outputs
       else:
         outs, hint_preds = net_outputs

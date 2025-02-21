@@ -1167,7 +1167,6 @@ def bellman_ford(A: _Array, s: int) -> _Out:
   msk = np.zeros(A.shape[0]) # whether already visited
   d[s] = 0
   msk[s] = 1
-  labels = []
   while True:
     prev_d = np.copy(d)
     prev_msk = np.copy(msk)
@@ -1178,7 +1177,6 @@ def bellman_ford(A: _Array, s: int) -> _Out:
             'pi_h': np.copy(pi),
             'd': np.copy(prev_d),
             'msk': np.copy(prev_msk),
-            'labels': labels
         })
     for u in range(A.shape[0]):
       for v in range(A.shape[0]):
@@ -1186,7 +1184,6 @@ def bellman_ford(A: _Array, s: int) -> _Out:
           if msk[v] == 0 or prev_d[u] + A[u, v] < d[v]:
             d[v] = prev_d[u] + A[u, v]
             pi[v] = u
-            labels.append(f"distance of n.{v} updated through n.{u} to {d[v]}")
           msk[v] = 1
     if np.all(d == prev_d):
       break

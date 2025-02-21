@@ -19,5 +19,4 @@ venv/
 .vscode
 
 # weights and datasets
-checkpoints/**
 downloads/CLRS30/**

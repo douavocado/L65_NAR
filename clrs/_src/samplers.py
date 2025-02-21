@@ -901,6 +901,7 @@ def _batch_hints(
       assert batched_traj[i].name == cur_sample[i].name
       cur_data = cur_sample[i].data
       cur_length = cur_data.shape[0]
+      print(batched_traj[i])
       batched_traj[i].data[:cur_length, sample_idx:sample_idx+1] = cur_data
       if i > 0:
         assert hint_lengths[sample_idx] == cur_length
