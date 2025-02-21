@@ -284,11 +284,14 @@ class Net(hk.Module):
           return_hints=return_hints,
           return_all_outputs=return_all_outputs,
           )
+      mpstate_hist = [deepcopy(mp_state)]
       mp_state, lean_mp_state = self._msg_passing_step(
           mp_state,
           i=0,
           first_step=True,
           **common_args)
+      
+      mpstate_hist.append(deepcopy(mp_state))
       # Then scan through the rest.
       scan_fn = functools.partial(
           self._msg_passing_step,
@@ -301,8 +304,7 @@ class Net(hk.Module):
               mp_state,
               jnp.arange(nb_mp_steps - 1) + 1,
               length=nb_mp_steps - 1)
-      else:
-          mpstate_hist = [deepcopy(mp_state)]
+      else:          
           output_mp_state = mp_state
           for j in range(1,nb_mp_steps):
               output_mp_state, accum_mp_state =self._msg_passing_step(
