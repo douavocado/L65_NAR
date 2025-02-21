@@ -1165,6 +1165,8 @@ def bellman_ford(A: _Array, s: int) -> _Out:
   d = np.zeros(A.shape[0]) # distances
   pi = np.arange(A.shape[0]) # previous node index in shortest path
   msk = np.zeros(A.shape[0]) # whether already visited
+  upd_d = np.full(A.shape[0], -1.) # updated distances to include in hint
+  upd_pi = np.full(A.shape[0], -1) # updated predecessors to include in hint
   d[s] = 0
   msk[s] = 1
   while True:
@@ -1177,13 +1179,20 @@ def bellman_ford(A: _Array, s: int) -> _Out:
             'pi_h': np.copy(pi),
             'd': np.copy(prev_d),
             'msk': np.copy(prev_msk),
+            'upd_pi': np.copy(upd_pi),
+            'upd_d': np.copy(upd_d),
         })
+    upd_pi.fill(-1)
+    upd_d.fill(-1.)
     for u in range(A.shape[0]):
       for v in range(A.shape[0]):
         if prev_msk[u] == 1 and A[u, v] != 0:
           if msk[v] == 0 or prev_d[u] + A[u, v] < d[v]:
             d[v] = prev_d[u] + A[u, v]
             pi[v] = u
+            
+            upd_pi[v] = pi[v]
+            upd_d[v] = d[v]
           msk[v] = 1
     if np.all(d == prev_d):
       break

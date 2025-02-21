@@ -403,6 +403,8 @@ SPECS = types.MappingProxyType({
         'pi_h': (Stage.HINT, Location.NODE, Type.POINTER),
         'd': (Stage.HINT, Location.NODE, Type.SCALAR),
         'msk': (Stage.HINT, Location.NODE, Type.MASK),
+        'upd_pi': (Stage.HINT, Location.NODE, Type.POINTER),
+        'upd_d': (Stage.HINT, Location.NODE, Type.SCALAR)
     },
     'dag_shortest_paths': {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
