@@ -20,3 +20,5 @@ venv/
 
 # weights and datasets
 downloads/CLRS30/**
+data/**
+interp_checkpoints/**

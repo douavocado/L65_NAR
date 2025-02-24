@@ -1165,10 +1165,11 @@ def bellman_ford(A: _Array, s: int) -> _Out:
   d = np.zeros(A.shape[0]) # distances
   pi = np.arange(A.shape[0]) # previous node index in shortest path
   msk = np.zeros(A.shape[0]) # whether already visited
-  upd_d = np.full(A.shape[0], -1.) # updated distances to include in hint
-  upd_pi = np.full(A.shape[0], -1) # updated predecessors to include in hint
+  upd_d = np.full(A.shape[0], 0.) # updated distances to include in hint
+  upd_pi = np.arange(A.shape[0]).astype(np.float64) # updated predecessors to include in hint
   d[s] = 0
   msk[s] = 1
+  steps = 0
   while True:
     prev_d = np.copy(d)
     prev_msk = np.copy(msk)
@@ -1182,8 +1183,8 @@ def bellman_ford(A: _Array, s: int) -> _Out:
             'upd_pi': np.copy(upd_pi),
             'upd_d': np.copy(upd_d),
         })
-    upd_pi.fill(-1)
-    upd_d.fill(-1.)
+    upd_pi = np.arange(A.shape[0]).astype(np.float64)
+    upd_d.fill(0.)
     for u in range(A.shape[0]):
       for v in range(A.shape[0]):
         if prev_msk[u] == 1 and A[u, v] != 0:
@@ -1194,8 +1195,11 @@ def bellman_ford(A: _Array, s: int) -> _Out:
             upd_pi[v] = pi[v]
             upd_d[v] = d[v]
           msk[v] = 1
-    if np.all(d == prev_d):
-      break
+    # if np.all(d == prev_d):
+    #   break
+    steps += 1
+    if steps >= A.shape[0]:
+        break
 
   probing.push(probes, specs.Stage.OUTPUT, next_probe={'pi': np.copy(pi)})
   probing.finalize(probes)
