@@ -10,7 +10,7 @@ import numpy as np
 from tqdm import tqdm
 
 from interp.models import InterpNetwork
-from interp.dataset import HDF5Dataset
+from interp.dataset import HDF5Dataset, custom_collate
 
 import argparse
 
@@ -37,21 +37,33 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch, num_epochs):
 
     with tqdm(total=len(dataloader), desc=f'Epoch {epoch+1}/{num_epochs}', unit='batch') as pbar:
         for batch in dataloader:
-            hidden_states = batch['hidden_states'].to(device)
-            edge_w = batch['edge_weights'].float().to(device)
+            batch_i =batch['all_cumsum']
+            time_i = batch['all_cumsum_timesteps']
+            batch_info = batch['batch']
+            no_graphs = batch['num_graphs']
+            hidden_states = batch['hidden_states'].to(device) # (T, H, total_D)
+            edge_w = batch['edge_weights'].float().to(device) # (total_D, total_D)
             
-            upd_pi = batch['upd_pi'].long().to(device) # (N, D, T-1)
-            upd_d = batch['upd_d'].float().to(device) # (N, T-1, D)
+            upd_pi = batch['upd_pi'].long().to(device) # (T, total_D)
+            upd_d = batch['upd_d'].float().to(device) # (T, total_D)
 
             # Prepare inputs and targets
             inputs = hidden_states
 
             optimizer.zero_grad()
-            class_out, dist_out = model(inputs, edge_w)
-            class_out = class_out.permute((0,3,1,2))
-            dist_l = F.mse_loss(dist_out, upd_d[:,:-1,:])  # Use MSE loss
-            class_l = class_loss(class_out.float(), upd_pi[:,:-1,:])
-            loss = dist_l + class_l
+            class_out, dist_out = model(inputs, edge_w, batch_info, no_graphs, time_i)
+            # class_out is a list of (T-1, D, D) shaped vectors. (D may not be constant across vectors) The number of vectors in the list is equal to no_graphs. For each vector
+            # dist_out is a list of (T-1, D) shaped vectors. again D may not be constant across vectors.
+            loss = 0
+            for i in range(len(class_out)):
+                # print(batch_i, i)
+                dist_ins = dist_out[i] # (T-1, D)
+                class_ins = class_out[i].permute((0,2,1)) # (T-1, D, D) second dimension is the source node
+                # print(class_ins.shape, upd_pi[time_i[i]:time_i[i+1]-1,batch_i[i]:batch_i[i+1]].shape)
+
+                dist_l = F.mse_loss(dist_ins, upd_d[time_i[i]:time_i[i+1]-1,batch_i[i]:batch_i[i+1]])  # Use MSE loss
+                class_l = class_loss(class_ins, upd_pi[time_i[i]:time_i[i+1]-1,batch_i[i]:batch_i[i+1]])
+                loss += dist_l + class_l
             loss.backward()
             optimizer.step()
 
@@ -73,19 +85,27 @@ def evaluate(model, dataloader, device):
     
     with torch.no_grad():
         for batch in dataloader:
-            hidden_states = batch['hidden_states'].to(device)
-            edge_w = batch['edge_weights'].float().to(device)
+            batch_i =batch['all_cumsum']
+            time_i = batch['all_cumsum_timesteps']
+            batch_info = batch['batch']
+            no_graphs = batch['num_graphs']
+            hidden_states = batch['hidden_states'].to(device) # (T, H, total_D)
+            edge_w = batch['edge_weights'].float().to(device) # (total_D, total_D)
             
-            upd_pi = batch['upd_pi'].long().to(device) # (N, D, T-1)
-            upd_d = batch['upd_d'].float().to(device) # (N, T-1, D)
+            upd_pi = batch['upd_pi'].long().to(device) # (T, total_D)
+            upd_d = batch['upd_d'].float().to(device) # (T, total_D)
 
             inputs = hidden_states
             
-            class_out, dist_out = model(inputs, edge_w)
-            class_out = class_out.permute((0,3,1,2))
-            dist_l = F.mse_loss(dist_out, upd_d[:,:-1,:])  # Use MSE loss
-            class_l = class_loss(class_out, upd_pi[:,:-1,:])
-            loss = dist_l + class_l
+            class_out, dist_out = model(inputs, edge_w, batch_info, no_graphs, time_i)
+            loss = 0
+            for i in range(len(class_out)):
+                dist_ins = dist_out[i] # (T-1, D)
+                class_ins = class_out[i].permute((0,2,1)) # (T-1, D, D) second dimension is the source node
+
+                dist_l = F.mse_loss(dist_ins, upd_d[time_i[i]:time_i[i+1]-1,batch_i[i]:batch_i[i+1]])  # Use MSE loss
+                class_l = class_loss(class_ins, upd_pi[time_i[i]:time_i[i+1]-1,batch_i[i]:batch_i[i+1]])
+                loss += dist_l + class_l
 
             running_loss += loss.item() * inputs.size(0)
             total_samples += inputs.size(0)
@@ -111,10 +131,10 @@ def main(args):
     resume = args.resume
 
     # --- Data Loading ---
-    train_dataset = HDF5Dataset("data/interp_data_7.h5")
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    val_dataset = HDF5Dataset("data/interp_data_7_eval.h5")
-    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True)
+    train_dataset = HDF5Dataset("data/interp_data_all_lengths.h5")
+    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
+    val_dataset = HDF5Dataset("data/interp_data_all_lengths_eval.h5")
+    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
 
      #get num_nodes from the dataset:
     first_batch = next(iter(train_dataloader))
@@ -144,15 +164,18 @@ def main(args):
         val_loss = evaluate(model, val_dataloader, device)
         print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
         val_losses.append(val_loss)
+        if val_loss <= min(val_losses):
+            torch.save(model.state_dict(), model_save_path)
+            print(f"Saved best model to {model_save_path}")
 
     # --- Evaluation (on the training set, for demonstration) ---
     # Ideally, you should have a separate test set.
     train_loss = evaluate(model, val_dataloader, device)
     print(f"Final Training Loss: {train_loss:.4f}")
 
-    # --- Save Model ---
-    torch.save(model.state_dict(), model_save_path)
-    print(f"Model saved to {model_save_path}")
+    # # --- Save Model ---
+    # torch.save(model.state_dict(), model_save_path)
+    # print(f"Model saved to {model_save_path}")
 
 
     train_dataset.close()  # Close HDF5 file
