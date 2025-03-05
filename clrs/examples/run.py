@@ -213,7 +213,7 @@ def make_sampler(length: int,
     num_samples = clrs.CLRS30[split]['num_samples'] * multiplier
     sampler, spec = clrs.build_sampler(
         algorithm,
-        seed=rng.randint(2**32),
+        seed=rng.randint(2**32, dtype=np.int64),
         num_samples=num_samples,
         length=length,
         **sampler_kwargs,
@@ -413,7 +413,7 @@ def main(unused_argv):
   train_lengths = [int(x) for x in FLAGS.train_lengths]
 
   rng = np.random.RandomState(FLAGS.seed)
-  rng_key = jax.random.PRNGKey(rng.randint(2**32))
+  rng_key = jax.random.PRNGKey(rng.randint(2**32, dtype=np.int64))
 
   # Create samplers
   (
@@ -553,7 +553,7 @@ def main(unused_argv):
       if (sum(val_scores) > best_score) or step == 0:
         best_score = sum(val_scores)
         logging.info('Checkpointing best model, %s', msg)
-        train_model.save_model('best.pkl')
+        train_model.save_model(f'best.pkl')
       else:
         logging.info('Not saving new best model, %s', msg)
 
@@ -561,7 +561,7 @@ def main(unused_argv):
     length_idx = (length_idx + 1) % len(train_lengths)
 
   logging.info('Restoring best model from checkpoint...')
-  eval_model.restore_model('best.pkl', only_load_processor=False)
+  eval_model.restore_model(f'best.pkl', only_load_processor=False)
 
   for algo_idx in range(len(train_samplers)):
     common_extras = {'examples_seen': current_train_items[algo_idx],
