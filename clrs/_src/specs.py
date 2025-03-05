@@ -437,6 +437,8 @@ SPECS = types.MappingProxyType({
         'mark': (Stage.HINT, Location.NODE, Type.MASK),
         'in_queue': (Stage.HINT, Location.NODE, Type.MASK),
         'u': (Stage.HINT, Location.NODE, Type.MASK_ONE),
+        'upd_pi': (Stage.HINT, Location.NODE, Type.POINTER),
+        'upd_d': (Stage.HINT, Location.NODE, Type.SCALAR),
     },
     'floyd_warshall': {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),

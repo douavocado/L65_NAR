@@ -1248,6 +1248,9 @@ def dijkstra(A: _Array, s: int) -> _Out:
   d[s] = 0
   in_queue[s] = 1
 
+  upd_pi = np.arange(A.shape[0]).astype(np.float64)
+  upd_d = np.full(A.shape[0], 0.)
+
   probing.push(
       probes,
       specs.Stage.HINT,
@@ -1256,10 +1259,16 @@ def dijkstra(A: _Array, s: int) -> _Out:
           'd': np.copy(d),
           'mark': np.copy(mark),
           'in_queue': np.copy(in_queue),
-          'u': probing.mask_one(s, A.shape[0])
+          'u': probing.mask_one(s, A.shape[0]),
+
+          'upd_pi': np.copy(upd_pi),
+          'upd_d': np.copy(upd_d)
       })
 
   for _ in range(A.shape[0]):
+    upd_pi = np.arange(A.shape[0]).astype(np.float64)
+    upd_d.fill(0.)
+
     u = np.argsort(d + (1.0 - in_queue) * 1e9)[0]  # drop-in for extract-min
     if in_queue[u] == 0:
       break
@@ -1272,6 +1281,9 @@ def dijkstra(A: _Array, s: int) -> _Out:
           d[v] = d[u] + A[u, v]
           in_queue[v] = 1
 
+          upd_pi[v] = pi[v]
+          upd_d[v] = d[v]
+
     probing.push(
         probes,
         specs.Stage.HINT,
@@ -1280,7 +1292,10 @@ def dijkstra(A: _Array, s: int) -> _Out:
             'd': np.copy(d),
             'mark': np.copy(mark),
             'in_queue': np.copy(in_queue),
-            'u': probing.mask_one(u, A.shape[0])
+            'u': probing.mask_one(u, A.shape[0]),
+
+            'upd_pi': np.copy(upd_pi),
+            'upd_d': np.copy(upd_d)
         })
 
   probing.push(probes, specs.Stage.OUTPUT, next_probe={'pi': np.copy(pi)})
