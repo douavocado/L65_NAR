@@ -553,7 +553,7 @@ def main(unused_argv):
       if (sum(val_scores) > best_score) or step == 0:
         best_score = sum(val_scores)
         logging.info('Checkpointing best model, %s', msg)
-        train_model.save_model(f'best.pkl')
+        train_model.save_model(f'best_{FLAGS.algorithms[algo_idx]}.pkl')
       else:
         logging.info('Not saving new best model, %s', msg)
 
@@ -561,7 +561,7 @@ def main(unused_argv):
     length_idx = (length_idx + 1) % len(train_lengths)
 
   logging.info('Restoring best model from checkpoint...')
-  eval_model.restore_model(f'best.pkl', only_load_processor=False)
+  eval_model.restore_model(f'best_{FLAGS.algorithms[algo_idx]}.pkl', only_load_processor=False)
 
   for algo_idx in range(len(train_samplers)):
     common_extras = {'examples_seen': current_train_items[algo_idx],
