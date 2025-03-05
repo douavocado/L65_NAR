@@ -1096,12 +1096,15 @@ def mst_prim(A: _Array, s: int) -> _Out:
           'adj': probing.graph(np.copy(A))
       })
 
-  key = np.zeros(A.shape[0])
-  mark = np.zeros(A.shape[0])
-  in_queue = np.zeros(A.shape[0])
-  pi = np.arange(A.shape[0])
+  key = np.zeros(A.shape[0]) # shortest distance of each node from a visited node
+  mark = np.zeros(A.shape[0]) # marks visited nodes with 1
+  in_queue = np.zeros(A.shape[0]) # queue of nodes that are accessible from visited nodes
+  pi = np.arange(A.shape[0]) # predecessor with shortest distance for each node 
   key[s] = 0
   in_queue[s] = 1
+
+  upd_pi = np.arange(A.shape[0]).astype(np.float64)
+  upd_key = np.full(A.shape[0], 0.)
 
   probing.push(
       probes,
@@ -1111,21 +1114,30 @@ def mst_prim(A: _Array, s: int) -> _Out:
           'key': np.copy(key),
           'mark': np.copy(mark),
           'in_queue': np.copy(in_queue),
-          'u': probing.mask_one(s, A.shape[0])
+          'u': probing.mask_one(s, A.shape[0]),
+
+          'upd_pi': np.copy(upd_pi),
+          'upd_key': np.copy(upd_key)
       })
 
-  for _ in range(A.shape[0]):
-    u = np.argsort(key + (1.0 - in_queue) * 1e9)[0]  # drop-in for extract-min
-    if in_queue[u] == 0:
+  for _ in range(A.shape[0]): # as many iterations as nodes
+    upd_pi = np.arange(A.shape[0]).astype(np.float64)
+    upd_key.fill(0.)
+
+    u = np.argsort(key + (1.0 - in_queue) * 1e9)[0]  # queued/accessible node with shortest distance (drop-in for extract-min)
+    if in_queue[u] == 0: # no node is queued
       break
-    mark[u] = 1
-    in_queue[u] = 0
-    for v in range(A.shape[0]):
-      if A[u, v] != 0:
-        if mark[v] == 0 and (in_queue[v] == 0 or A[u, v] < key[v]):
-          pi[v] = u
-          key[v] = A[u, v]
-          in_queue[v] = 1
+    mark[u] = 1 # mark node as visited
+    in_queue[u] = 0 # remove from queue (no longer needs to be visited)
+    for v in range(A.shape[0]): # for all non-visited neighbours of the node
+      if A[u, v] != 0: 
+        if mark[v] == 0 and (in_queue[v] == 0 or A[u, v] < key[v]): # if they're becoming accessible for the first time or now have a shorter distance
+          pi[v] = u # update predecessor with shortest distance
+          key[v] = A[u, v] # update shortest distance
+          in_queue[v] = 1 # queue them as accessible
+
+          upd_pi[v] = pi[v]
+          upd_key[v] = key[v]
 
     probing.push(
         probes,
@@ -1135,7 +1147,10 @@ def mst_prim(A: _Array, s: int) -> _Out:
             'key': np.copy(key),
             'mark': np.copy(mark),
             'in_queue': np.copy(in_queue),
-            'u': probing.mask_one(u, A.shape[0])
+            'u': probing.mask_one(u, A.shape[0]),
+
+            'upd_pi': np.copy(upd_pi),
+            'upd_key': np.copy(upd_key)
         })
 
   probing.push(probes, specs.Stage.OUTPUT, next_probe={'pi': np.copy(pi)})
@@ -1180,6 +1195,7 @@ def bellman_ford(A: _Array, s: int) -> _Out:
             'pi_h': np.copy(pi),
             'd': np.copy(prev_d),
             'msk': np.copy(prev_msk),
+
             'upd_pi': np.copy(upd_pi),
             'upd_d': np.copy(upd_d),
         })
