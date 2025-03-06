@@ -9,8 +9,8 @@ import h5py
 import numpy as np
 from tqdm import tqdm
 
-from interp.models import InterpNetwork
 from interp.dataset import HDF5Dataset, custom_collate
+from interp.models import InterpNetwork, GNNInterpNetwork, GNNTransformerInterpNetwork
 
 import argparse
 
@@ -32,6 +32,8 @@ def one_hot_encode(upd_pi):
 def train_one_epoch(model, dataloader, optimizer, device, epoch, num_epochs):
     model.train()
     running_loss = 0.0
+    running_dist_loss = 0.0
+    running_class_loss = 0.0
     total_samples = 0
     class_loss = CrossEntropyLoss()
 
@@ -68,9 +70,12 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch, num_epochs):
             optimizer.step()
 
             running_loss += loss.item() * inputs.size(0)
+            running_dist_loss += dist_l.item() * inputs.size(0)
+            running_class_loss += class_l.item() * inputs.size(0)
+
             total_samples += inputs.size(0)
             pbar.update(1)
-            pbar.set_postfix({'loss': f'{loss.item():.4f}'})
+            pbar.set_postfix({'dist_loss': f'{running_dist_loss/total_samples:.4f}', 'class_loss': f'{running_class_loss/total_samples:.4f}', 'loss': f'{running_loss/total_samples:.4f}'})
 
     epoch_loss = running_loss / total_samples
     return epoch_loss
@@ -127,13 +132,27 @@ def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     model_save_path = args.model_save_path
-    pretrained_model_path = args.pretrained_model_path
     resume = args.resume
 
     # --- Data Loading ---
-    train_dataset = HDF5Dataset("data/interp_data_all_lengths.h5")
+    if args.dataset == "all":
+        train_pth = "data/interp_data_all_lengths.h5"
+        val_pth = "data/interp_data_all_lengths_eval.h5"
+    elif args.dataset == "16":
+        train_pth = "data/interp_data_16.h5"
+        val_pth = "data/interp_data_16_eval.h5"
+    elif args.dataset == "8":
+        train_pth = "data/interp_data_8.h5"
+        val_pth = "data/interp_data_8_eval.h5"
+    elif args.dataset == "OOD":
+        train_pth = "data/interp_data_OOD_20_64.h5"
+        val_pth = "data/interp_data_OOD_20_64_eval.h5"
+    else:
+        raise ValueError(f"Dataset {args.dataset} not found")
+
+    train_dataset = HDF5Dataset(train_pth)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
-    val_dataset = HDF5Dataset("data/interp_data_all_lengths_eval.h5")
+    val_dataset = HDF5Dataset(val_pth)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
 
      #get num_nodes from the dataset:
@@ -143,18 +162,29 @@ def main(args):
 
 
     # --- Model, Optimizer, Loss ---
-    model = InterpNetwork(hidden_dim=hidden_dim).to(device)
+    if approach == "mlp_diff":
+        model = InterpNetwork(hidden_dim=hidden_dim).to(device)
+    elif approach == "gnn":
+        model = GNNInterpNetwork(hidden_dim=hidden_dim).to(device)
+    elif approach == "gnn_transformer":
+        model = GNNTransformerInterpNetwork(hidden_dim=hidden_dim).to(device)
+    else:
+        raise ValueError(f"Approach {approach} not found")
 
     # Load pretrained weights if provided
     if resume:
-        model.load_state_dict(torch.load(pretrained_model_path))
-        print(f"Loaded pretrained weights from {pretrained_model_path}")
+        model.load_state_dict(torch.load(model_save_path))
+        print(f"Loaded pretrained weights from {model_save_path}")
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     # --- Training Loop ---
     train_losses = []
-    val_losses = []  # Placeholder - Add a validation dataset if you have one.
+    val_losses = []
+    best_val_loss = float('inf')
+    patience = args.patience # Number of epochs to wait for improvement before stopping
+    counter = 0    # Counter for patience
+    
     for epoch in range(num_epochs):
         train_loss = train_one_epoch(model, train_dataloader, optimizer, device, epoch, num_epochs)
         print(f"Epoch {epoch + 1}/{num_epochs}, Training Loss: {train_loss:.4f}")
@@ -164,9 +194,20 @@ def main(args):
         val_loss = evaluate(model, val_dataloader, device)
         print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
         val_losses.append(val_loss)
-        if val_loss <= min(val_losses):
+        
+        # Save model if validation loss improves
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
             torch.save(model.state_dict(), model_save_path)
             print(f"Saved best model to {model_save_path}")
+            counter = 0  # Reset patience counter
+        else:
+            counter += 1  # Increment counter if no improvement
+            
+        # Early stopping check
+        if counter >= patience:
+            print(f"Early stopping triggered after {epoch+1} epochs (no improvement for {patience} epochs)")
+            break
 
     # --- Evaluation (on the training set, for demonstration) ---
     # Ideally, you should have a separate test set.
@@ -187,19 +228,20 @@ def main(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the InterpNetwork.")
     parser.add_argument("--hidden_dim", type=int, default=128, help="Hidden dimension of the model.")
-    parser.add_argument("--approach", type=str, default="diff_mlp",
-                        choices=["simple_diff", "mlp_diff", "transformer", "masked_transformer"],
+    parser.add_argument("--approach", type=str, default="mlp_diff",
+                        choices=["mlp_diff", "gnn", "gnn_transformer"],
+                        help="Approach for temporal processing.")
+    parser.add_argument("--dataset", type=str, default="all",
+                        choices=["all", "16", "8", "OOD"],
                         help="Approach for temporal processing.")
     parser.add_argument("--learning_rate", type=float, default=1e-3, help="Learning rate.")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
-    parser.add_argument("--num_epochs", type=int, default=1000, help="Number of epochs.")
+    parser.add_argument("--num_epochs", type=int, default=100, help="Number of epochs.")
     parser.add_argument("--model_save_path", type=str, default="interp_checkpoints/trained_model.pth",
                         help="Path to save the trained model.")
-    parser.add_argument("--pretrained_model_path", type=str, default="interp_checkpoints/trained_model.pth",
-                        help="Path to a pretrained model to load (optional).")
     parser.add_argument("-r", "--resume", action='store_true',
                         help="Resume from previously trained weights taken from --pretrained_model_path")
-    
+    parser.add_argument("--patience", type=int, default=5, help="Number of epochs to wait for improvement before stopping")
 
     args = parser.parse_args()
     main(args)
