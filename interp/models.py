@@ -98,13 +98,13 @@ class DummyModel(nn.Module):
         return class_out, dist_out
 
 class InterpNetwork(nn.Module): 
-    def __init__(self, hidden_dim: int):
+    def __init__(self, hidden_dim: int, proj_dim: int = 128, dropout: float = 0.1):
         super().__init__()
         self.node_dim = hidden_dim
         
         # Define projection dimensions
-        proj_dim = 128
-        dropout = 0.1
+        self.proj_dim = proj_dim
+        self.dropout = dropout
         
         # Process node states to extract meaningful features
         self.node_encoder = nn.Sequential(
@@ -246,14 +246,14 @@ class InterpNetwork(nn.Module):
         return class_out, dist_out
 
 class GNNInterpNetwork(nn.Module):
-    def __init__(self, hidden_dim: int, gnn_layers: int = 1):
+    def __init__(self, hidden_dim: int, proj_dim: int = 128, msg_dim: int = 128, gnn_layers: int = 1, dropout: float = 0.1):
         super().__init__()
         self.node_dim = hidden_dim
         
         # Feature dimensions
-        self.proj_dim = 128
-        self.msg_dim = 128
-        self.dropout = 0.1
+        self.proj_dim = proj_dim
+        self.msg_dim = msg_dim
+        self.dropout = dropout
         
         # Initial node encoder
         self.node_encoder = nn.Sequential(
@@ -471,13 +471,13 @@ class TransformerInterpNetwork(nn.Module):
     Processes each graph's node states across time steps with attention mechanisms.
     Nodes can only attend to their neighbors at current and previous time steps.
     """
-    def __init__(self, hidden_dim: int, num_heads: int = 4, num_layers: int = 2, dropout: float = 0.1):
+    def __init__(self, hidden_dim: int, proj_dim: int = 128, out_dim: int = 128, num_heads: int = 4, num_layers: int = 2, dropout: float = 0.1):
         super().__init__()
         self.node_dim = hidden_dim
         
         # Feature dimensions
-        self.proj_dim = 128
-        self.out_dim = 128
+        self.proj_dim = proj_dim
+        self.out_dim = out_dim
         self.dropout = dropout
         self.num_heads = num_heads
         self.num_layers = num_layers

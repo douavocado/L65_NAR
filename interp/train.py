@@ -5,13 +5,16 @@ from torch.utils.data import DataLoader, Dataset
 import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 
+import copy
+import json
+
 import h5py
 import os
 import numpy as np
 from tqdm import tqdm
 
 from interp.dataset import HDF5Dataset, custom_collate
-from interp.models import InterpNetwork, GNNInterpNetwork, TransformerInterpNetwork
+from interp.config import load_config, create_model_from_config
 
 import argparse
 
@@ -123,73 +126,98 @@ def evaluate(model, dataloader, device):
 
 
 def main(args):
-    # --- Hyperparameters and Setup ---
-    hidden_dim = args.hidden_dim
-    approach = args.approach
-    learning_rate = args.learning_rate
-    batch_size = args.batch_size
-    num_epochs = args.num_epochs
+    # Load configuration
+    config = load_config(args.config)
+    
+    # Extract training parameters from config
+    training_config = config.get('training', {})
+    learning_rate = float(training_config.get('learning_rate', 1e-3))
+    batch_size = int(training_config.get('batch_size', 16))
+    num_epochs = int(training_config.get('num_epochs', 100))
+    patience = int(training_config.get('patience', 5))
+    dataset_name = training_config.get('dataset', 'all')
+    alg = training_config.get('algo', 'bellman_ford')
+    model_name = training_config.get('model_name', 'mlp_diff')
+    
+    # Override with command line arguments if provided
+    if args.learning_rate is not None:
+        print(f"Overriding learning rate from {learning_rate} to {args.learning_rate}")
+        learning_rate = args.learning_rate
+        
+    if args.batch_size is not None:
+        print(f"Overriding batch size from {batch_size} to {args.batch_size}")
+        batch_size = args.batch_size
+        
+    if args.num_epochs is not None:
+        print(f"Overriding number of epochs from {num_epochs} to {args.num_epochs}")
+        num_epochs = args.num_epochs
+        
+    if args.dataset is not None:
+        print(f"Overriding dataset from {dataset_name} to {args.dataset}")
+        dataset_name = args.dataset
+        
+    if args.algo is not None:
+        print(f"Overriding algorithm from {alg} to {args.algo}")
+        alg = args.algo
+        
+    if args.model_name is not None:
+        print(f"Overriding model name from {model_name} to {args.model_name}")
+        model_name = args.model_name
+        
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    model_name = args.model_name
-    resume = args.resume
-    alg = args.algo
-
+    
+    # Model name and paths
+    checkpoint_dir = os.path.join("interp_checkpoints", alg, f"{model_name}_{dataset_name}")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    model_save_path = os.path.join(checkpoint_dir, f"{model_name}_{dataset_name}.pth")
+    config_save_path = os.path.join(checkpoint_dir, f"{model_name}_{dataset_name}_config.json")
+    
+    # Data loading
     data_root = os.path.join("data", alg)
-    model_save_path = os.path.join("interp_checkpoints", alg, model_name + "_" + args.dataset + ".pth")
-
-    # --- Data Loading ---
-    if args.dataset == "all":
+    
+    if dataset_name == "all":
         train_pth = os.path.join(data_root, "interp_data_all.h5")
-        val_pth = os.path.join(data_root, "interp_data_all_eval.h5")
-    elif args.dataset == "16":
+    elif dataset_name == "16":
         train_pth = os.path.join(data_root, "interp_data_16.h5")
-        val_pth = os.path.join(data_root, "interp_data_16_eval.h5")
-    elif args.dataset == "8":
+    elif dataset_name == "8":
         train_pth = os.path.join(data_root, "interp_data_8.h5")
-        val_pth = os.path.join(data_root, "interp_data_8_eval.h5")
-    elif args.dataset == "OOD":
+    elif dataset_name == "OOD":
         train_pth = os.path.join(data_root, "interp_data_OOD_20_64.h5")
-        val_pth = os.path.join(data_root, "interp_data_OOD_20_64_eval.h5")
     else:
-        raise ValueError(f"Dataset {args.dataset} not found")
+        raise ValueError(f"Dataset {dataset_name} not found")
+
+    # Validation always on graphs of size 16
+    val_pth = os.path.join(data_root, "interp_data_16_eval.h5")
 
     train_dataset = HDF5Dataset(train_pth)
     train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
     val_dataset = HDF5Dataset(val_pth)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
 
-
-    # --- Model, Optimizer, Loss ---
-    if approach == "mlp_diff":
-        model = InterpNetwork(hidden_dim=hidden_dim).to(device)
-    elif approach == "gnn":
-        model = GNNInterpNetwork(hidden_dim=hidden_dim).to(device)
-    elif approach == "transformer":
-        model = TransformerInterpNetwork(hidden_dim=hidden_dim,num_layers=2)
-    else:
-        raise ValueError(f"Approach {approach} not found")
-
+    # Create model from config
+    model = create_model_from_config(config).to(device)
+    
     # Load pretrained weights if provided
-    if resume:
+    if args.resume:
         model.load_state_dict(torch.load(model_save_path))
         print(f"Loaded pretrained weights from {model_save_path}")
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-    # --- Training Loop ---
+    # Training loop
     train_losses = []
     val_losses = []
     best_val_loss = float('inf')
-    patience = args.patience # Number of epochs to wait for improvement before stopping
-    counter = 0    # Counter for patience
+    counter = 0  # Counter for patience
     
     for epoch in range(num_epochs):
         train_loss = train_one_epoch(model, train_dataloader, optimizer, device, epoch, num_epochs)
         print(f"Epoch {epoch + 1}/{num_epochs}, Training Loss: {train_loss:.4f}")
         train_losses.append(train_loss)
 
-        # --- Validation (optional, but highly recommended) ---
+        # Validation
         val_loss = evaluate(model, val_dataloader, device)
         print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
         val_losses.append(val_loss)
@@ -197,8 +225,22 @@ def main(args):
         # Save model if validation loss improves
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            # Save model weights
             torch.save(model.state_dict(), model_save_path)
-            print(f"Saved best model to {model_save_path}")
+            # Save configuration
+            with open(config_save_path, 'w') as f:
+                # Create a copy of the config with any command-line overrides
+                updated_config = copy.deepcopy(config)
+                if 'training' not in updated_config:
+                    updated_config['training'] = {}
+                updated_config['training']['learning_rate'] = learning_rate
+                updated_config['training']['batch_size'] = batch_size
+                updated_config['training']['num_epochs'] = num_epochs
+                updated_config['training']['dataset'] = dataset_name
+                updated_config['training']['algo'] = alg
+                updated_config['training']['model_name'] = model_name
+                json.dump(updated_config, f, indent=4)
+            print(f"Saved best model to {model_save_path} and config to {config_save_path}")
             counter = 0  # Reset patience counter
         else:
             counter += 1  # Increment counter if no improvement
@@ -208,36 +250,23 @@ def main(args):
             print(f"Early stopping triggered after {epoch+1} epochs (no improvement for {patience} epochs)")
             break
 
-    # --- Evaluation (on the training set, for demonstration) ---
-    # Ideally, you should have a separate test set.
+    # Final evaluation
     train_loss = evaluate(model, val_dataloader, device)
     print(f"Final Training Loss: {train_loss:.4f}")
-
-    # # --- Save Model ---
-    # torch.save(model.state_dict(), model_save_path)
-    # print(f"Model saved to {model_save_path}")
-
 
     train_dataset.close()  # Close HDF5 file
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the InterpNetwork.")
-    parser.add_argument("--hidden_dim", type=int, default=128, help="Hidden dimension of the model.")
-    parser.add_argument("--approach", type=str, default="mlp_diff",
-                        choices=["mlp_diff", "gnn", "transformer"],
-                        help="Approach for temporal processing.")
-    parser.add_argument("--dataset", type=str, default="all",
-                        choices=["all", "16", "8", "OOD"],
-                        help="Approach for temporal processing.")
-    parser.add_argument("--learning_rate", type=float, default=1e-3, help="Learning rate.")
-    parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
-    parser.add_argument("--num_epochs", type=int, default=100, help="Number of epochs.")
-    parser.add_argument("--model_name", type=str, default="trained_model",
-                        help="Determines the path to save the trained model.")
-    parser.add_argument("-r", "--resume", action='store_true',
-                        help="Resume from previously trained weights taken from --model_save_path")
-    parser.add_argument("--patience", type=int, default=5, help="Number of epochs to wait for improvement before stopping")
-    parser.add_argument("--algo", type=str, default="bellman_ford", choices=["bellman_ford", "dijkstra", "prims"], help="Algorithm to train on.")
+    parser.add_argument("--config", type=str, required=True, help="Path to the configuration file")
+    parser.add_argument("--hidden_dim", type=int, help="Hidden dimension of the model (overrides config)")
+    parser.add_argument("--learning_rate", type=float, help="Learning rate (overrides config)")
+    parser.add_argument("--batch_size", type=int, help="Batch size (overrides config)")
+    parser.add_argument("--num_epochs", type=int, help="Number of epochs (overrides config)")
+    parser.add_argument("--dataset", type=str, choices=["all", "16", "8", "OOD"], help="Dataset to use (overrides config)")
+    parser.add_argument("--model_name", type=str, help="Model name for saving (defaults to model_type)")
+    parser.add_argument("-r", "--resume", action='store_true', help="Resume from previously trained weights")
+    parser.add_argument("--algo", type=str, choices=["bellman_ford", "dijkstra", "prims"], help="Algorithm to train on (overrides config)")
     args = parser.parse_args()
     main(args)
