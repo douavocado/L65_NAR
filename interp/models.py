@@ -464,24 +464,29 @@ class GNNLayer(nn.Module):
         
         return outputs
 
-class GNNTransformerInterpNetwork(nn.Module):
-    def __init__(self, hidden_dim: int, gnn_layers: int = 1, num_transformer_layers: int = 2, 
-                 nhead: int = 4):
+
+class TransformerInterpNetwork(nn.Module):
+    """
+    A transformer-based architecture for interpreting graph algorithm executions.
+    Processes each graph's node states across time steps with attention mechanisms.
+    Nodes can only attend to their neighbors at current and previous time steps.
+    """
+    def __init__(self, hidden_dim: int, num_heads: int = 4, num_layers: int = 2, dropout: float = 0.1):
         super().__init__()
         self.node_dim = hidden_dim
         
         # Feature dimensions
         self.proj_dim = 128
-        self.msg_dim = 128
-        self.dropout = 0.1
-        self.num_transformer_layers = num_transformer_layers
-        self.nhead = nhead
+        self.out_dim = 128
+        self.dropout = dropout
+        self.num_heads = num_heads
+        self.num_layers = num_layers
         
         # Initial node encoder
         self.node_encoder = nn.Sequential(
             nn.Linear(hidden_dim, self.proj_dim),
             nn.ReLU(),
-            nn.Dropout(self.dropout)
+            nn.Dropout(dropout)
         )
         
         # Edge encoder
@@ -490,44 +495,139 @@ class GNNTransformerInterpNetwork(nn.Module):
             nn.ReLU()
         )
         
-        # Message passing layers
-        self.gnn_layers = nn.ModuleList([
-            GNNLayer(self.proj_dim, self.proj_dim // 4, self.msg_dim) 
-            for _ in range(gnn_layers)
-        ])
+        # Time positional encoding
+        self.time_encoding = nn.Parameter(torch.zeros(1, 1, self.proj_dim))
+        nn.init.normal_(self.time_encoding, mean=0, std=0.02)
         
-        # Transformer for temporal relationships (operates on node level)
-        transformer_layer = nn.TransformerEncoderLayer(
-            d_model=self.msg_dim,
-            nhead=nhead,
-            dim_feedforward=4 * self.msg_dim,
-            dropout=self.dropout,
+        # Multi-head attention with custom masking
+        self.self_attn = nn.MultiheadAttention(
+            embed_dim=self.proj_dim,
+            num_heads=num_heads,
+            dropout=dropout,
             batch_first=True
         )
-        self.transformer = nn.TransformerEncoder(
-            transformer_layer,
-            num_layers=num_transformer_layers
+        
+        # Feed-forward network after attention
+        self.ffn = nn.Sequential(
+            nn.Linear(self.proj_dim, 4 * self.proj_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(4 * self.proj_dim, self.proj_dim)
         )
         
-        # Prediction heads
+        # Layer normalization
+        self.norm1 = nn.LayerNorm(self.proj_dim)
+        self.norm2 = nn.LayerNorm(self.proj_dim)
+        
+        # Prediction heads for update classification
         self.update_classifier = nn.Sequential(
-            nn.Linear(2 * self.msg_dim + self.proj_dim // 4, self.msg_dim),
+            nn.Linear(2 * self.proj_dim + self.proj_dim // 4, self.out_dim),
             nn.ReLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.msg_dim, 1)
+            nn.Dropout(dropout),
+            nn.Linear(self.out_dim, 1)
         )
         
+        # Distance update predictor
         self.dist_predictor = nn.Sequential(
-            nn.Linear(2 * self.msg_dim, self.msg_dim),
+            nn.Linear(2 * self.proj_dim, self.out_dim),
             nn.ReLU(),
-            nn.Dropout(self.dropout),
-            nn.Linear(self.msg_dim, 1)
+            nn.Dropout(dropout),
+            nn.Linear(self.out_dim, 1)
         )
+    
+    def create_spatiotemporal_mask(self, adj_matrix, T):
+        """
+        Create a mask that allows nodes to attend only to:
+        1. Themselves and their neighbors at the current time step
+        2. Themselves and their neighbors at the previous time step
+        
+        Args:
+            adj_matrix: (D, D) adjacency matrix of the graph
+            T: Number of time steps
+            
+        Returns:
+            attn_mask: (T*D, T*D) attention mask
+        """
+        D = adj_matrix.shape[0]
+        
+        # Create a mask of shape (T*D, T*D)
+        mask = torch.zeros(T*D, T*D, device=adj_matrix.device, dtype=torch.bool)
+        
+        # Convert adjacency matrix to boolean (True where there's an edge)
+        adj_bool = (adj_matrix > 0)
+        
+        # Add self-loops to adjacency matrix
+        adj_with_self = adj_bool | torch.eye(D, device=adj_matrix.device, dtype=torch.bool)
+        
+        for t in range(T):
+            # Current time step offset
+            t_offset = t * D
+            
+            # For each node at current time step
+            for i in range(D):
+                node_idx = t_offset + i
+                
+                # Allow attention to self and neighbors at current time step
+                for j in range(D):
+                    if adj_with_self[i, j]:
+                        mask[node_idx, t_offset + j] = True
+                
+                # Allow attention to self and neighbors at previous time step (if exists)
+                if t > 0:
+                    prev_t_offset = (t-1) * D
+                    for j in range(D):
+                        if adj_with_self[i, j]:
+                            mask[node_idx, prev_t_offset + j] = True
+        
+        # Return the mask (True = attend, False = don't attend)
+        return mask
+    
+    def transformer_block(self, x, attn_mask):
+        """
+        Custom transformer block with neighbor-aware attention
+        
+        Args:
+            x: (T*D, proj_dim) input features
+            attn_mask: (T*D, T*D) attention mask
+            
+        Returns:
+            output: (T*D, proj_dim) transformed features
+        """
+        # Self-attention with custom mask
+        residual = x
+        x = self.norm1(x)
+        attn_output, _ = self.self_attn(
+            query=x,
+            key=x,
+            value=x,
+            attn_mask=~attn_mask,  # PyTorch uses True to mask (block) attention
+            need_weights=False
+        )
+        x = residual + attn_output
+        
+        # Feed-forward network
+        residual = x
+        x = self.norm2(x)
+        x = self.ffn(x)
+        x = residual + x
+        
+        return x
     
     def forward(self, x, edge_w, batch, no_graphs, time_i):
         """
-        Uses GNN layers to process graph structure at each time step,
-        then applies transformer layers to capture temporal dependencies.
+        Forward pass implementing the same interface as InterpNetwork,
+        but using transformer architecture with neighbor-aware attention.
+        
+        Args:
+            x: (total_T, H, total_D) node features across all time steps and graphs
+            edge_w: (total_D, total_D) edge weights (block diagonal for multiple graphs)
+            batch: Vector indicating which nodes belong to which graph
+            no_graphs: Number of graphs in the batch
+            time_i: Vector indicating the time indices for each graph
+            
+        Returns:
+            class_out: List of (T-1, D, D) tensors with update source logits
+            dist_out: List of (T-1, D) tensors with distance update predictions
         """
         total_T, H, total_D = x.shape
         
@@ -539,75 +639,60 @@ class GNNTransformerInterpNetwork(nn.Module):
             # Extract graph data
             T = time_i[g+1] - time_i[g]
             graph_mask = (batch == g)
-            D = graph_mask.sum()
+            D = graph_mask.sum().item()  # Convert to integer
             
             # Get this graph's node states and edge weights
             x_graph = x[time_i[g]:time_i[g+1], :, graph_mask]  # (T, H, D)
             edge_w_graph = edge_w[start_idx:start_idx+D, start_idx:start_idx+D]  # (D, D)
             
-            # Get consecutive time steps
-            x_curr = x_graph[:-1].permute(0, 2, 1)  # (T-1, D, H)
-            x_next = x_graph[1:].permute(0, 2, 1)   # (T-1, D, H)
-            
-            # Encode edge weights - shape: (D, D, proj_dim//4)
+            # Process edge weights
             edge_features = edge_w_graph.unsqueeze(-1)  # (D, D, 1)
-            edge_encoded = self.edge_encoder(edge_features)
+            edge_encoded = self.edge_encoder(edge_features)  # (D, D, proj_dim//4)
             
-            # Encode current and next node states
-            curr_nodes_flat = x_curr.reshape(-1, H)  # ((T-1)*D, H)
-            next_nodes_flat = x_next.reshape(-1, H)  # ((T-1)*D, H)
+            # Reshape node features for encoding
+            x_graph = x_graph.permute(0, 2, 1)  # (T, D, H)
+            x_flat = x_graph.reshape(T * D, H)  # (T*D, H)
             
-            curr_encoded_flat = self.node_encoder(curr_nodes_flat)  # ((T-1)*D, proj_dim)
-            next_encoded_flat = self.node_encoder(next_nodes_flat)  # ((T-1)*D, proj_dim)
+            # Encode node features
+            node_encoded = self.node_encoder(x_flat)  # (T*D, proj_dim)
             
-            curr_encoded = curr_encoded_flat.reshape(T-1, D, -1)  # (T-1, D, proj_dim)
-            next_encoded = next_encoded_flat.reshape(T-1, D, -1)  # (T-1, D, proj_dim)
+            # Add time encoding
+            time_indices = torch.arange(T, device=x.device).repeat_interleave(D)
+            time_pos = self.time_encoding.squeeze(0).expand(T*D, -1) * time_indices.unsqueeze(-1)
+            node_encoded = node_encoded + time_pos
             
-            # Apply GNN layers to all timesteps
-            curr_gnn_features = curr_encoded
-            next_gnn_features = next_encoded
+            # Create spatiotemporal attention mask
+            attn_mask = self.create_spatiotemporal_mask(edge_w_graph, T)
             
-            for gnn_layer in self.gnn_layers:
-                # Process current nodes at each time step
-                curr_gnn_features_list = []
-                for t in range(T-1):
-                    curr_t_features = gnn_layer(curr_gnn_features[t], edge_encoded, edge_w_graph)
-                    curr_gnn_features_list.append(curr_t_features)
-                curr_gnn_features = torch.stack(curr_gnn_features_list, dim=0)  # (T-1, D, msg_dim)
-                
-                # Process next nodes at each time step
-                next_gnn_features_list = []
-                for t in range(T-1):
-                    next_t_features = gnn_layer(next_gnn_features[t], edge_encoded, edge_w_graph)
-                    next_gnn_features_list.append(next_t_features)
-                next_gnn_features = torch.stack(next_gnn_features_list, dim=0)  # (T-1, D, msg_dim)
+            # Apply multiple transformer blocks
+            x_transformed = node_encoded
+            for _ in range(self.num_layers):
+                x_transformed = self.transformer_block(x_transformed, attn_mask)
             
-            # Apply transformer to each node separately across time
-            # Reshape to (D, T-1, msg_dim) to process nodes individually across time
-            curr_temporal = curr_gnn_features.permute(1, 0, 2)  # (D, T-1, msg_dim)
+            # Reshape back to (T, D, proj_dim)
+            node_features = x_transformed.reshape(T, D, self.proj_dim)
             
-            # Apply transformer to each node's sequence
-            curr_contextualized = self.transformer(curr_temporal)  # (D, T-1, msg_dim)
+            # Extract features for consecutive time steps
+            curr_features = node_features[:-1]  # (T-1, D, proj_dim)
+            next_features = node_features[1:]   # (T-1, D, proj_dim)
             
-            # Reshape back to (T-1, D, msg_dim)
-            curr_contextualized = curr_contextualized.permute(1, 0, 2)  # (T-1, D, msg_dim)
-            
-            # For update classification, we need to consider all pairs of nodes
-            next_i = next_gnn_features.unsqueeze(2).expand(-1, -1, D, -1)  # (T-1, D, D, msg_dim)
-            curr_j = curr_contextualized.unsqueeze(1).expand(-1, D, -1, -1)  # (T-1, D, D, msg_dim)
+            # For update classification, consider all pairs of nodes
+            # Expand dimensions for broadcasting
+            next_i = next_features.unsqueeze(2).expand(-1, -1, D, -1)  # (T-1, D, D, proj_dim)
+            curr_j = curr_features.unsqueeze(1).expand(-1, D, -1, -1)  # (T-1, D, D, proj_dim)
             
             # Expand edge features for all timesteps
             edge_feats = edge_encoded.unsqueeze(0).expand(T-1, -1, -1, -1)  # (T-1, D, D, proj_dim//4)
             
             # Concatenate features for update classification
-            update_feats = torch.cat([next_i, curr_j, edge_feats], dim=3)  # (T-1, D, D, 2*msg_dim + proj_dim//4)
+            update_feats = torch.cat([next_i, curr_j, edge_feats], dim=3)  # (T-1, D, D, 2*proj_dim+proj_dim//4)
             
-            # Reshape for batch processing through the classifier
-            update_feats_flat = update_feats.reshape(-1, 2*self.msg_dim + self.proj_dim//4)
+            # Process through classifier
+            update_feats_flat = update_feats.reshape(-1, 2*self.proj_dim + self.proj_dim//4)
             class_logits_flat = self.update_classifier(update_feats_flat).squeeze(-1)  # ((T-1)*D*D)
             class_logits = class_logits_flat.reshape(T-1, D, D)  # (T-1, D, D)
             
-            # Mask non-existent edges (except self-loops) for all timesteps
+            # Mask non-existent edges (except self-loops)
             edge_mask = (edge_w_graph == 0)
             diag_mask = torch.eye(D, device=edge_w.device).bool()
             mask = edge_mask & ~diag_mask
@@ -616,15 +701,16 @@ class GNNTransformerInterpNetwork(nn.Module):
             mask_expanded = mask.unsqueeze(0).expand(T-1, -1, -1)
             graph_class_logits = class_logits.masked_fill(mask_expanded, -1e9)
             
-            # For distance prediction, use contextualized current features and next features
-            dist_feats = torch.cat([curr_contextualized, next_gnn_features], dim=-1)  # (T-1, D, 2*msg_dim)
-            dist_feats_flat = dist_feats.reshape(-1, 2*self.msg_dim)
+            # For distance prediction, concatenate consecutive time features
+            dist_feats = torch.cat([curr_features, next_features], dim=-1)  # (T-1, D, 2*proj_dim)
+            dist_feats_flat = dist_feats.reshape(-1, 2*self.proj_dim)
             dist_preds_flat = self.dist_predictor(dist_feats_flat).squeeze(-1)  # ((T-1)*D)
             graph_dist_preds = dist_preds_flat.reshape(T-1, D)  # (T-1, D)
             
+            # Add to output lists
             class_out.append(graph_class_logits)
             dist_out.append(graph_dist_preds)
             
             start_idx += D
         
-        return class_out, dist_out 
+        return class_out, dist_out

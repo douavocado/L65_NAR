@@ -6,11 +6,12 @@ import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 
 import h5py
+import os
 import numpy as np
 from tqdm import tqdm
 
 from interp.dataset import HDF5Dataset, custom_collate
-from interp.models import InterpNetwork, GNNInterpNetwork, GNNTransformerInterpNetwork
+from interp.models import InterpNetwork, GNNInterpNetwork, TransformerInterpNetwork
 
 import argparse
 
@@ -61,10 +62,9 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch, num_epochs):
                 # print(batch_i, i)
                 dist_ins = dist_out[i] # (T-1, D)
                 class_ins = class_out[i].permute((0,2,1)) # (T-1, D, D) second dimension is the source node
-                # print(class_ins.shape, upd_pi[time_i[i]:time_i[i+1]-1,batch_i[i]:batch_i[i+1]].shape)
 
-                dist_l = F.mse_loss(dist_ins, upd_d[time_i[i]:time_i[i+1]-1,batch_i[i]:batch_i[i+1]])  # Use MSE loss
-                class_l = class_loss(class_ins, upd_pi[time_i[i]:time_i[i+1]-1,batch_i[i]:batch_i[i+1]])
+                dist_l = F.mse_loss(dist_ins, upd_d[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])  # Use MSE loss
+                class_l = class_loss(class_ins, upd_pi[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])
                 loss += dist_l + class_l
             loss.backward()
             optimizer.step()
@@ -108,8 +108,8 @@ def evaluate(model, dataloader, device):
                 dist_ins = dist_out[i] # (T-1, D)
                 class_ins = class_out[i].permute((0,2,1)) # (T-1, D, D) second dimension is the source node
 
-                dist_l = F.mse_loss(dist_ins, upd_d[time_i[i]:time_i[i+1]-1,batch_i[i]:batch_i[i+1]])  # Use MSE loss
-                class_l = class_loss(class_ins, upd_pi[time_i[i]:time_i[i+1]-1,batch_i[i]:batch_i[i+1]])
+                dist_l = F.mse_loss(dist_ins, upd_d[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])  # Use MSE loss
+                class_l = class_loss(class_ins, upd_pi[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])
                 loss += dist_l + class_l
 
             running_loss += loss.item() * inputs.size(0)
@@ -131,22 +131,26 @@ def main(args):
     num_epochs = args.num_epochs
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    model_save_path = args.model_save_path
+    model_name = args.model_name
     resume = args.resume
+    alg = args.algo
+
+    data_root = os.path.join("data", alg)
+    model_save_path = os.path.join("interp_checkpoints", alg, model_name + "_" + args.dataset + ".pth")
 
     # --- Data Loading ---
     if args.dataset == "all":
-        train_pth = "data/interp_data_all_lengths.h5"
-        val_pth = "data/interp_data_all_lengths_eval.h5"
+        train_pth = os.path.join(data_root, "interp_data_all.h5")
+        val_pth = os.path.join(data_root, "interp_data_all_eval.h5")
     elif args.dataset == "16":
-        train_pth = "data/interp_data_16.h5"
-        val_pth = "data/interp_data_16_eval.h5"
+        train_pth = os.path.join(data_root, "interp_data_16.h5")
+        val_pth = os.path.join(data_root, "interp_data_16_eval.h5")
     elif args.dataset == "8":
-        train_pth = "data/interp_data_8.h5"
-        val_pth = "data/interp_data_8_eval.h5"
+        train_pth = os.path.join(data_root, "interp_data_8.h5")
+        val_pth = os.path.join(data_root, "interp_data_8_eval.h5")
     elif args.dataset == "OOD":
-        train_pth = "data/interp_data_OOD_20_64.h5"
-        val_pth = "data/interp_data_OOD_20_64_eval.h5"
+        train_pth = os.path.join(data_root, "interp_data_OOD_20_64.h5")
+        val_pth = os.path.join(data_root, "interp_data_OOD_20_64_eval.h5")
     else:
         raise ValueError(f"Dataset {args.dataset} not found")
 
@@ -155,19 +159,14 @@ def main(args):
     val_dataset = HDF5Dataset(val_pth)
     val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
 
-     #get num_nodes from the dataset:
-    first_batch = next(iter(train_dataloader))
-    # num_nodes = first_batch['hidden_states'].shape[-1] #Get D
-    #print("Number of Nodes (D):",num_nodes)
-
 
     # --- Model, Optimizer, Loss ---
     if approach == "mlp_diff":
         model = InterpNetwork(hidden_dim=hidden_dim).to(device)
     elif approach == "gnn":
         model = GNNInterpNetwork(hidden_dim=hidden_dim).to(device)
-    elif approach == "gnn_transformer":
-        model = GNNTransformerInterpNetwork(hidden_dim=hidden_dim).to(device)
+    elif approach == "transformer":
+        model = TransformerInterpNetwork(hidden_dim=hidden_dim,num_layers=2)
     else:
         raise ValueError(f"Approach {approach} not found")
 
@@ -221,15 +220,12 @@ def main(args):
 
     train_dataset.close()  # Close HDF5 file
 
-    # --- (Optional) Further Analysis ---
-    # You can analyze train_predictions and train_targets here.
-    # For example, calculate accuracy, visualize predictions, etc.
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train the InterpNetwork.")
     parser.add_argument("--hidden_dim", type=int, default=128, help="Hidden dimension of the model.")
     parser.add_argument("--approach", type=str, default="mlp_diff",
-                        choices=["mlp_diff", "gnn", "gnn_transformer"],
+                        choices=["mlp_diff", "gnn", "transformer"],
                         help="Approach for temporal processing.")
     parser.add_argument("--dataset", type=str, default="all",
                         choices=["all", "16", "8", "OOD"],
@@ -237,11 +233,11 @@ if __name__ == "__main__":
     parser.add_argument("--learning_rate", type=float, default=1e-3, help="Learning rate.")
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size.")
     parser.add_argument("--num_epochs", type=int, default=100, help="Number of epochs.")
-    parser.add_argument("--model_save_path", type=str, default="interp_checkpoints/trained_model.pth",
-                        help="Path to save the trained model.")
+    parser.add_argument("--model_name", type=str, default="trained_model",
+                        help="Determines the path to save the trained model.")
     parser.add_argument("-r", "--resume", action='store_true',
-                        help="Resume from previously trained weights taken from --pretrained_model_path")
+                        help="Resume from previously trained weights taken from --model_save_path")
     parser.add_argument("--patience", type=int, default=5, help="Number of epochs to wait for improvement before stopping")
-
+    parser.add_argument("--algo", type=str, default="bellman_ford", choices=["bellman_ford", "dijkstra", "prims"], help="Algorithm to train on.")
     args = parser.parse_args()
     main(args)

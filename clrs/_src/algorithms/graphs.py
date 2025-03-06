@@ -1270,8 +1270,8 @@ def dijkstra(A: _Array, s: int) -> _Out:
     upd_d.fill(0.)
 
     u = np.argsort(d + (1.0 - in_queue) * 1e9)[0]  # drop-in for extract-min
-    if in_queue[u] == 0:
-      break
+    # if in_queue[u] == 0:
+    #   break
     mark[u] = 1
     in_queue[u] = 0
     for v in range(A.shape[0]):
