@@ -1125,8 +1125,8 @@ def mst_prim(A: _Array, s: int) -> _Out:
     upd_key.fill(0.)
 
     u = np.argsort(key + (1.0 - in_queue) * 1e9)[0]  # queued/accessible node with shortest distance (drop-in for extract-min)
-    if in_queue[u] == 0: # no node is queued
-      break
+    # if in_queue[u] == 0: # no node is queued
+    #   break
     mark[u] = 1 # mark node as visited
     in_queue[u] = 0 # remove from queue (no longer needs to be visited)
     for v in range(A.shape[0]): # for all non-visited neighbours of the node
