@@ -23,5 +23,6 @@ downloads/CLRS30/**
 data/**
 interp_checkpoints/**
 
-# actual run file used for training
+# used for training
 run.py
+*.zip
