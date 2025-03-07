@@ -366,6 +366,8 @@ SPECS = types.MappingProxyType({
         'pi': (Stage.OUTPUT, Location.NODE, Type.POINTER),
         'reach_h': (Stage.HINT, Location.NODE, Type.MASK),
         'pi_h': (Stage.HINT, Location.NODE, Type.POINTER),
+        'upd_d': (Stage.HINT, Location.NODE, Type.SCALAR),
+        'upd_pi': (Stage.HINT, Location.NODE, Type.POINTER),
     },
     'mst_kruskal': {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
@@ -394,7 +396,7 @@ SPECS = types.MappingProxyType({
         'in_queue': (Stage.HINT, Location.NODE, Type.MASK),
         'u': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'upd_pi': (Stage.HINT, Location.NODE, Type.POINTER),
-        'upd_key': (Stage.HINT, Location.NODE, Type.SCALAR),
+        'upd_d': (Stage.HINT, Location.NODE, Type.SCALAR),
     },
     'bellman_ford': {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),
