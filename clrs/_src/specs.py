@@ -396,7 +396,7 @@ SPECS = types.MappingProxyType({
         'in_queue': (Stage.HINT, Location.NODE, Type.MASK),
         'u': (Stage.HINT, Location.NODE, Type.MASK_ONE),
         'upd_pi': (Stage.HINT, Location.NODE, Type.POINTER),
-        'upd_key': (Stage.HINT, Location.NODE, Type.SCALAR),
+        'upd_d': (Stage.HINT, Location.NODE, Type.SCALAR),
     },
     'bellman_ford': {
         'pos': (Stage.INPUT, Location.NODE, Type.SCALAR),

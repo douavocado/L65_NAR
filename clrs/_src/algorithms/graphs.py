@@ -1113,7 +1113,7 @@ def mst_prim(A: _Array, s: int) -> _Out:
   in_queue[s] = 1
 
   upd_pi = np.arange(A.shape[0]).astype(np.float64)
-  upd_key = np.full(A.shape[0], 0.)
+  upd_d = np.full(A.shape[0], 0.)
 
   probing.push(
       probes,
@@ -1126,12 +1126,12 @@ def mst_prim(A: _Array, s: int) -> _Out:
           'u': probing.mask_one(s, A.shape[0]),
 
           'upd_pi': np.copy(upd_pi),
-          'upd_key': np.copy(upd_key)
+          'upd_d': np.copy(upd_d)
       })
 
   for _ in range(A.shape[0]): # as many iterations as nodes
     upd_pi = np.arange(A.shape[0]).astype(np.float64)
-    upd_key.fill(0.)
+    upd_d.fill(0.)
 
     u = np.argsort(key + (1.0 - in_queue) * 1e9)[0]  # queued/accessible node with shortest distance (drop-in for extract-min)
     if in_queue[u] == 0: # no node is queued
@@ -1146,7 +1146,7 @@ def mst_prim(A: _Array, s: int) -> _Out:
           in_queue[v] = 1 # queue them as accessible
 
           upd_pi[v] = pi[v]
-          upd_key[v] = key[v]
+          upd_d[v] = key[v]
 
     probing.push(
         probes,
@@ -1159,7 +1159,7 @@ def mst_prim(A: _Array, s: int) -> _Out:
             'u': probing.mask_one(u, A.shape[0]),
 
             'upd_pi': np.copy(upd_pi),
-            'upd_key': np.copy(upd_key)
+            'upd_d': np.copy(upd_d)
         })
 
   probing.push(probes, specs.Stage.OUTPUT, next_probe={'pi': np.copy(pi)})
