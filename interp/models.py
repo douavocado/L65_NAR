@@ -318,10 +318,6 @@ class GNNInterpNetwork(nn.Module):
             edge_features = edge_w_graph.unsqueeze(-1)  # (D, D, 1)
             edge_encoded = self.edge_encoder(edge_features)
             
-            # Initialize empty containers for predictions
-            t_class_logits = []
-            t_dist_preds = []
-            
             # Process all time transitions in parallel
             # Encode current and next node states
             curr_nodes = x_curr  # (T-1, D, H)
@@ -449,9 +445,14 @@ class GNNLayer(nn.Module):
         mask = (adj_matrix > 0).unsqueeze(-1).to(node_features.dtype)  # (N, N, 1)
         masked_messages = messages * mask
         
-        # Aggregate messages (sum over source nodes)
-        aggregated = masked_messages.sum(dim=1)  # (N, out_dim)
-        
+        # Max aggregation
+        aggregated = masked_messages.max(dim=1)[0]  # Take max over source nodes
+        # Mean aggregation
+        # Sum all messages and divide by number of valid connections
+        # valid_connections = mask.sum(dim=1).clamp(min=1.0)  # (N, 1)
+        # aggregated = masked_messages.sum(dim=1) / valid_connections  # (N, out_dim)
+
+
         # Update node representations
         concat_features = torch.cat([node_features, aggregated], dim=1)  # (N, node_dim + out_dim)
         updated = self.update_fn(concat_features)  # (N, out_dim)
@@ -463,6 +464,174 @@ class GNNLayer(nn.Module):
         outputs = gate_values * updated + (1 - gate_values) * node_features[:, :updated.size(1)]
         
         return outputs
+
+class GNNJointInterpNetwork(nn.Module):
+    def __init__(self, hidden_dim: int, proj_dim: int = 128, msg_dim: int = 128, gnn_layers: int = 1, dropout: float = 0.1, algorithms: list = ["bellman_ford"]):
+        super().__init__()
+        self.node_dim = hidden_dim
+        
+        # Feature dimensions
+        self.proj_dim = proj_dim
+        self.msg_dim = msg_dim
+        self.dropout = dropout
+        self.algorithms = algorithms
+        
+        # For each algorithm, create separate node, edge encoders and prediction heads, but same message passing layers
+        self.node_encoders = {algo: nn.Sequential(
+            nn.Linear(hidden_dim, self.proj_dim),
+            nn.ReLU(),
+            nn.Dropout(self.dropout)
+        ) for algo in self.algorithms}
+        self.edge_encoders = {algo: nn.Sequential(
+            nn.Linear(1, self.proj_dim // 4),
+            nn.ReLU()
+        ) for algo in self.algorithms}
+        
+        
+        # Message passing layers
+        self.gnn_layers = nn.ModuleList([
+            GNNLayer(self.proj_dim, self.proj_dim // 4, self.msg_dim) 
+            for _ in range(gnn_layers)
+        ])
+        
+        self.update_classifiers = {algo: nn.Sequential(
+            nn.Linear(2 * self.msg_dim + self.proj_dim // 4, self.msg_dim),
+            nn.ReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.msg_dim, 1)
+        ) for algo in self.algorithms}
+
+        self.dist_predictors = {algo: nn.Sequential(
+            nn.Linear(2 * self.msg_dim, self.msg_dim),
+            nn.ReLU(),
+            nn.Dropout(self.dropout),
+            nn.Linear(self.msg_dim, 1)
+        ) for algo in self.algorithms}
+    
+    def forward(self, hidden_states, edge_w, batch, no_graphs, time_i):
+        """
+        Same input/output interface as InterpNetwork, but uses GNN message passing
+        for improved modeling of graph algorithm interpretations. Also here hidden_states is a dictionary of node features for each algorithm.
+        whereas in InterpNetwork, x was a single tensor. This is because we are using different node encoders for each algorithm.
+        The key to the dictionary is the algorithm name.
+        Edge_w is also a dictionary,
+        batch is also a dictonary,
+        no_graphs is also a dictionary,
+        time_i is also a dictionary
+        """
+        out_class_dic = {algo: None for algo in hidden_states.keys()}
+        out_dist_dic = {algo: None for algo in hidden_states.keys()}
+
+        for algo, x in hidden_states.items():
+            edge_w_algo = edge_w[algo]
+            batch_algo = batch[algo]
+            no_graphs_algo = no_graphs[algo]
+            time_i_algo = time_i[algo]
+
+            total_T, H, total_D = x.shape
+            
+            class_out = []
+            dist_out = []
+            
+            start_idx = 0
+            for g in range(no_graphs_algo):
+                # Extract graph data
+                T = time_i_algo[g+1] - time_i_algo[g]
+                graph_mask = (batch_algo == g)
+                D = graph_mask.sum()
+                
+                # Get this graph's node states and edge weights
+                x_graph = x[time_i_algo[g]:time_i_algo[g+1], :, graph_mask]  # (T, H, D)
+                edge_w_graph = edge_w_algo[start_idx:start_idx+D, start_idx:start_idx+D]  # (D, D)
+                
+                # Get consecutive time steps
+                x_curr = x_graph[:-1].permute(0, 2, 1)  # (T-1, D, H)
+                x_next = x_graph[1:].permute(0, 2, 1)   # (T-1, D, H)
+                
+                # Encode edge weights - shape: (D, D, proj_dim//4)
+                edge_features = edge_w_graph.unsqueeze(-1)  # (D, D, 1)
+                edge_encoded = self.edge_encoders[algo](edge_features)
+                
+                # Initialize empty containers for predictions
+                t_class_logits = []
+                t_dist_preds = []
+                
+                # Process all time transitions in parallel
+                # Encode current and next node states
+                curr_nodes = x_curr  # (T-1, D, H)
+                next_nodes = x_next  # (T-1, D, H)
+                
+                # Reshape for batch processing
+                curr_nodes_flat = curr_nodes.reshape(-1, H)  # ((T-1)*D, H)
+                next_nodes_flat = next_nodes.reshape(-1, H)  # ((T-1)*D, H)
+                
+                # Encode all nodes at once
+                curr_encoded_flat = self.node_encoders[algo](curr_nodes_flat)  # ((T-1)*D, proj_dim)
+                next_encoded_flat = self.node_encoders[algo](next_nodes_flat)  # ((T-1)*D, proj_dim)
+                
+                # Reshape back to time-separated form
+                curr_encoded = curr_encoded_flat.reshape(T-1, D, -1)  # (T-1, D, proj_dim)
+                next_encoded = next_encoded_flat.reshape(T-1, D, -1)  # (T-1, D, proj_dim)
+                
+                # Process each timestep's GNN in parallel by treating time as batch dimension
+                curr_gnn_features = curr_encoded
+                next_gnn_features = next_encoded
+                
+                # Apply GNN layers to all timesteps at once
+                for gnn_layer in self.gnn_layers:
+                    # For current nodes
+                    curr_gnn_features_list = []
+                    for t in range(T-1):
+                        curr_t_features = gnn_layer(curr_gnn_features[t], edge_encoded, edge_w_graph)
+                        curr_gnn_features_list.append(curr_t_features)
+                    curr_gnn_features = torch.stack(curr_gnn_features_list, dim=0)  # (T-1, D, msg_dim)
+                    
+                    # For next nodes
+                    next_gnn_features_list = []
+                    for t in range(T-1):
+                        next_t_features = gnn_layer(next_gnn_features[t], edge_encoded, edge_w_graph)
+                        next_gnn_features_list.append(next_t_features)
+                    next_gnn_features = torch.stack(next_gnn_features_list, dim=0)  # (T-1, D, msg_dim)
+                
+                # Predict update sources for all timesteps at once
+                # Expand dimensions for broadcasting
+                next_i = next_gnn_features.unsqueeze(2).expand(-1, -1, D, -1)  # (T-1, D, D, msg_dim)
+                curr_j = curr_gnn_features.unsqueeze(1).expand(-1, D, -1, -1)  # (T-1, D, D, msg_dim)
+                
+                # Expand edge features for all timesteps
+                edge_feats = edge_encoded.unsqueeze(0).expand(T-1, -1, -1, -1)  # (T-1, D, D, proj_dim//4)
+                
+                # Concatenate features for update classification
+                update_feats = torch.cat([next_i, curr_j, edge_feats], dim=3)  # (T-1, D, D, 2*msg_dim + proj_dim//4)
+                
+                # Reshape for batch processing through the classifier
+                update_feats_flat = update_feats.reshape(-1, 2*self.msg_dim + self.proj_dim//4)
+                class_logits_flat = self.update_classifiers[algo](update_feats_flat).squeeze(-1)  # ((T-1)*D*D)
+                class_logits = class_logits_flat.reshape(T-1, D, D)  # (T-1, D, D)
+                
+                # Mask non-existent edges (except self-loops) for all timesteps
+                edge_mask = (edge_w_graph == 0)
+                diag_mask = torch.eye(D, device=edge_w_algo.device).bool()
+                mask = edge_mask & ~diag_mask
+                
+                # Apply mask to all timesteps
+                mask_expanded = mask.unsqueeze(0).expand(T-1, -1, -1)
+                graph_class_logits = class_logits.masked_fill(mask_expanded, -1e9)
+                
+                # Predict distance updates for all timesteps at once
+                dist_feats = torch.cat([curr_gnn_features, next_gnn_features], dim=-1)  # (T-1, D, 2*msg_dim)
+                dist_feats_flat = dist_feats.reshape(-1, 2*self.msg_dim)
+                dist_preds_flat = self.dist_predictors[algo](dist_feats_flat).squeeze(-1)  # ((T-1)*D)
+                graph_dist_preds = dist_preds_flat.reshape(T-1, D)  # (T-1, D)
+                
+                class_out.append(graph_class_logits)
+                dist_out.append(graph_dist_preds)
+                
+                start_idx += D
+
+            out_class_dic[algo] = class_out
+            out_dist_dic[algo] = dist_out
+        return out_class_dic, out_dist_dic
 
 
 class TransformerInterpNetwork(nn.Module):

@@ -13,7 +13,7 @@ import os
 import numpy as np
 from tqdm import tqdm
 
-from interp.dataset import HDF5Dataset, custom_collate
+from interp.dataset import HDF5Dataset, custom_collate, nested_custom_collate
 from interp.config import load_config, create_model_from_config
 
 import argparse
@@ -122,8 +122,100 @@ def evaluate(model, dataloader, device):
 
     return avg_loss
 
+def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epochs):
+    ''' Here dataloaders output a dictionary of dictionaries. The outer dictionary has keys as the algorithm names and the inner dictionary has keys as the algorithm names and the values are the dataloader for that algorithm. '''
+    model.train()
+    running_loss = {algo: 0.0 for algo in dataloader.dataset[0].keys()}
+    total_samples = {algo: 0 for algo in dataloader.dataset[0].keys()}
+    class_loss = CrossEntropyLoss()
 
+    with tqdm(total=len(dataloader), desc=f'Epoch {epoch+1}/{num_epochs}', unit='batch') as pbar:
+        for batch in dataloader:
+            batch_i = {algo: batch[algo]['all_cumsum'] for algo in batch.keys()}
+            time_i = {algo: batch[algo]['all_cumsum_timesteps'] for algo in batch.keys()}
+            batch_info = {algo: batch[algo]['batch'] for algo in batch.keys()}
+            no_graphs = {algo: batch[algo]['num_graphs'] for algo in batch.keys()}
+            hidden_states = {algo: batch[algo]['hidden_states'].to(device) for algo in batch.keys()} # dictionary of (T, H, total_D)
+            edge_w = {algo: batch[algo]['edge_weights'].float().to(device) for algo in batch.keys()} # dictionary of (total_D, total_D)
+            
+            upd_pi = {algo: batch[algo]['upd_pi'].long().to(device) for algo in batch.keys()} # dictionary of (T, total_D)
+            upd_d = {algo: batch[algo]['upd_d'].float().to(device) for algo in batch.keys()} # dictionary of (T, total_D)
 
+            # Prepare inputs and targets
+            inputs = hidden_states
+
+            optimizer.zero_grad()
+            class_out_dic, dist_out_dic = model(inputs, edge_w, batch_info, no_graphs, time_i)
+            # class_out_dic is a dictionary of class_out, dist_out for each algorithm
+            # class_out is a list of (T-1, D, D) shaped vectors. (D may not be constant across vectors) The number of vectors in the list is equal to no_graphs. For each vector
+            # dist_out is a list of (T-1, D) shaped vectors. again D may not be constant across vectors.
+            algo_losses = {algo : 0 for algo in batch.keys()}
+            for algo in class_out_dic.keys():
+                class_out = class_out_dic[algo]
+                dist_out = dist_out_dic[algo]
+                for i in range(len(class_out)):
+                    # print(batch_i, i)
+                    dist_ins = dist_out[i] # (T-1, D)
+                    class_ins = class_out[i].permute((0,2,1)) # (T-1, D, D) second dimension is the source node
+
+                    dist_l = F.mse_loss(dist_ins, upd_d[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])  # Use MSE loss
+                    class_l = class_loss(class_ins, upd_pi[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])
+                    algo_losses[algo] += dist_l + class_l
+            
+            loss = sum(algo_losses.values())
+            loss.backward()
+            optimizer.step()
+
+            for algo in algo_losses.keys():
+                running_loss[algo] += algo_losses[algo].item() * inputs[algo].size(0)
+                total_samples[algo] += inputs[algo].size(0)
+            pbar.update(1)
+            loss_dict = {algo: f"{running_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()}
+            pbar.set_postfix(loss_dict)
+
+    epoch_loss = sum(running_loss.values()) / sum(total_samples.values())
+    return epoch_loss
+
+def evaluate_joint(model, dataloader, device):
+    ''' Here dataloaders output a dictionary of dictionaries. The outer dictionary has keys as the algorithm names and the inner dictionary has keys as the algorithm names and the values are the dataloader for that algorithm. '''
+    model.eval()
+    running_loss = {algo: 0.0 for algo in dataloader.dataset[0].keys()}
+    total_samples = {algo: 0 for algo in dataloader.dataset[0].keys()}
+    class_loss = CrossEntropyLoss()
+
+    with torch.no_grad():
+        for batch in dataloader:
+            batch_i = {algo: batch[algo]['all_cumsum'] for algo in batch.keys()}
+            time_i = {algo: batch[algo]['all_cumsum_timesteps'] for algo in batch.keys()}
+            batch_info = {algo: batch[algo]['batch'] for algo in batch.keys()}
+            no_graphs = {algo: batch[algo]['num_graphs'] for algo in batch.keys()}  
+            hidden_states = {algo: batch[algo]['hidden_states'].to(device) for algo in batch.keys()} # dictionary of (T, H, total_D)
+            edge_w = {algo: batch[algo]['edge_weights'].float().to(device) for algo in batch.keys()} # dictionary of (total_D, total_D)
+            
+            upd_pi = {algo: batch[algo]['upd_pi'].long().to(device) for algo in batch.keys()} # dictionary of (T, total_D)
+            upd_d = {algo: batch[algo]['upd_d'].float().to(device) for algo in batch.keys()} # dictionary of (T, total_D)   
+
+            inputs = hidden_states
+
+            class_out_dic, dist_out_dic = model(inputs, edge_w, batch_info, no_graphs, time_i)
+            algo_losses = {algo : 0 for algo in batch.keys()}
+            for algo in class_out_dic.keys():
+                class_out = class_out_dic[algo]
+                dist_out = dist_out_dic[algo]
+                for i in range(len(class_out)):
+                    dist_ins = dist_out[i] # (T-1, D)
+                    class_ins = class_out[i].permute((0,2,1)) # (T-1, D, D) second dimension is the source node
+
+                    dist_l = F.mse_loss(dist_ins, upd_d[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])  # Use MSE loss
+                    class_l = class_loss(class_ins, upd_pi[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])
+                    algo_losses[algo] += dist_l + class_l
+            
+            loss = sum(algo_losses.values())
+            running_loss[algo] += loss.item() * inputs[algo].size(0)
+            total_samples[algo] += inputs[algo].size(0) 
+
+    avg_loss = sum(running_loss.values()) / sum(total_samples.values())
+    return avg_loss 
 
 def main(args):
     # Load configuration
@@ -164,6 +256,10 @@ def main(args):
         print(f"Overriding model name from {model_name} to {args.model_name}")
         model_name = args.model_name
         
+    if alg in ["bellman_ford_bfs", "bellman_ford_dijkstra", "bellman_ford_prims"]:
+        joint_training = True
+    else:
+        joint_training = False
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
@@ -191,10 +287,16 @@ def main(args):
     # Validation always on graphs of size 16
     val_pth = os.path.join(data_root, "interp_data_16_eval.h5")
 
-    train_dataset = HDF5Dataset(train_pth)
-    train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
-    val_dataset = HDF5Dataset(val_pth)
-    val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
+    train_dataset = HDF5Dataset(train_pth, nested=joint_training)
+    if joint_training:
+        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=nested_custom_collate)
+    else:
+        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
+    val_dataset = HDF5Dataset(val_pth, nested=joint_training)
+    if joint_training:
+        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn=nested_custom_collate)
+    else:
+        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
 
     # Create model from config
     model = create_model_from_config(config).to(device)
@@ -213,12 +315,19 @@ def main(args):
     counter = 0  # Counter for patience
     
     for epoch in range(num_epochs):
-        train_loss = train_one_epoch(model, train_dataloader, optimizer, device, epoch, num_epochs)
+        # if we are using joint training then we need to use different training and evaluation functions
+        if joint_training:
+            train_loss = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs)
+        else:
+            train_loss = train_one_epoch(model, train_dataloader, optimizer, device, epoch, num_epochs)
         print(f"Epoch {epoch + 1}/{num_epochs}, Training Loss: {train_loss:.4f}")
         train_losses.append(train_loss)
 
         # Validation
-        val_loss = evaluate(model, val_dataloader, device)
+        if joint_training:
+            val_loss = evaluate_joint(model, val_dataloader, device)
+        else:
+            val_loss = evaluate(model, val_dataloader, device)
         print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
         val_losses.append(val_loss)
         
@@ -251,8 +360,11 @@ def main(args):
             break
 
     # Final evaluation
-    train_loss = evaluate(model, val_dataloader, device)
-    print(f"Final Training Loss: {train_loss:.4f}")
+    if joint_training:
+        train_loss = evaluate_joint(model, val_dataloader, device)
+    else:
+        train_loss = evaluate(model, val_dataloader, device)
+    print(f"Final Validation Loss: {train_loss:.4f}")
 
     train_dataset.close()  # Close HDF5 file
 
@@ -267,6 +379,6 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, choices=["all", "16", "8", "OOD"], help="Dataset to use (overrides config)")
     parser.add_argument("--model_name", type=str, help="Model name for saving (defaults to model_type)")
     parser.add_argument("-r", "--resume", action='store_true', help="Resume from previously trained weights")
-    parser.add_argument("--algo", type=str, choices=["bellman_ford", "dijkstra", "prims"], help="Algorithm to train on (overrides config)")
+    parser.add_argument("--algo", type=str, choices=["bellman_ford", "dijkstra", "prims", "bellman_ford_bfs"], help="Algorithm to train on (overrides config)")
     args = parser.parse_args()
     main(args)

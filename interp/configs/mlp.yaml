@@ -7,7 +7,7 @@ model:
 
 training:
   learning_rate: 1e-3
-  batch_size: 16
+  batch_size: 8
   num_epochs: 100
   patience: 5
   algo: "bellman_ford"

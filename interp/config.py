@@ -59,26 +59,42 @@ def create_model_from_config(config: Dict[str, Any]):
     Returns:
         Model instance
     """
-    from interp.models import InterpNetwork, GNNInterpNetwork, TransformerInterpNetwork
+    from interp.models import InterpNetwork, GNNInterpNetwork, TransformerInterpNetwork, GNNJointInterpNetwork
     
     model_type = config.get('model_type', 'mlp_diff')
     model_config = config.get('model', {})
     
     if model_type == 'mlp_diff':
         return InterpNetwork(
-            hidden_dim=model_config.get('hidden_dim', 128)
+            hidden_dim=model_config.get('hidden_dim', 128),
+            proj_dim=model_config.get('proj_dim',128),
+            dropout=model_config.get('dropout', 0.1),
         )
     elif model_type == 'gnn':
         return GNNInterpNetwork(
             hidden_dim=model_config.get('hidden_dim', 128),
-            gnn_layers=model_config.get('gnn_layers', 1)
+            gnn_layers=model_config.get('gnn_layers', 1),
+            dropout=model_config.get('dropout', 0.1),
+            msg_dim=model_config.get('msg_dim', 128),
+            proj_dim=model_config.get('proj_dim', 128)
         )
     elif model_type == 'transformer':
         return TransformerInterpNetwork(
             hidden_dim=model_config.get('hidden_dim', 128),
             num_heads=model_config.get('num_heads', 4),
             num_layers=model_config.get('num_layers', 2),
-            dropout=model_config.get('dropout', 0.1)
+            dropout=model_config.get('dropout', 0.1),
+            proj_dim=model_config.get('proj_dim', 128),
+            out_dim=model_config.get('out_dim', 128)
+        )
+    elif model_type == 'gnn_joint':
+        return GNNJointInterpNetwork(
+            hidden_dim=model_config.get('hidden_dim', 128),
+            gnn_layers=model_config.get('gnn_layers', 1),
+            dropout=model_config.get('dropout', 0.1),
+            msg_dim=model_config.get('msg_dim', 128),
+            proj_dim=model_config.get('proj_dim', 128),
+            algorithms=model_config.get('algorithms', ["bellman_ford", "bfs"])
         )
     else:
         raise ValueError(f"Unknown model type: {model_type}") 
