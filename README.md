@@ -2,6 +2,9 @@
 
 This repository contains code for Neural Algorithm Reasoning (NAR) interpretation on the CLRS Algorithmic Reasoning Dataset.
 
+## Edits over original CLRS code
+Some code from the `algorithms/graph.py` has been modified to create extra labels for training. This includes sometimes letting the algorithm run till end (disable early termination) to prevent instances where there are not many time steps to train on. For the BFS algorithm this is not possible, so early cutoff used (but clipped below at 2 time steps).
+
 ## Repository Structure
 
 ### Data Folder
