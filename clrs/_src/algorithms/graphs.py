@@ -195,11 +195,12 @@ def bfs(A: _Array, s: int) -> _Out:
   reach = np.zeros(A.shape[0])
   pi = np.arange(A.shape[0])
   reach[s] = 1
+  
+  upd_pi = np.arange(A.shape[0]).astype(np.float64)
+  upd_d = np.full(A.shape[0], 0.)
+  upd_d[s] = reach[s]
 
   while True:
-    upd_pi = np.arange(A.shape[0]).astype(np.float64)
-    upd_d = np.full(A.shape[0], 0.)
-
     prev_reach = np.copy(reach)
     probing.push(
         probes,
@@ -211,6 +212,10 @@ def bfs(A: _Array, s: int) -> _Out:
             'upd_pi': np.copy(upd_pi),
             'upd_d': np.copy(upd_d),
         })
+    
+    upd_pi = np.arange(A.shape[0]).astype(np.float64)
+    upd_d.fill(0.)
+    
     for i in range(A.shape[0]):
       for j in range(A.shape[0]):
         if A[i, j] > 0 and prev_reach[i] == 1:
