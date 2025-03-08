@@ -122,8 +122,8 @@ def evaluate(model, dataloader, device):
 
     return avg_loss
 
-def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epochs):
-    ''' Here dataloaders output a dictionary of dictionaries. The outer dictionary has keys as the algorithm names and the inner dictionary has keys as the algorithm names and the values are the dataloader for that algorithm. '''
+def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epochs, train_algos):
+    ''' Train algos is the only algorithms to train on (loss is backpropagated for these algorithms only)'''    
     model.train()
     running_loss = {algo: 0.0 for algo in dataloader.dataset[0].keys()}
     total_samples = {algo: 0 for algo in dataloader.dataset[0].keys()}
@@ -162,7 +162,7 @@ def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epoch
                     class_l = class_loss(class_ins, upd_pi[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])
                     algo_losses[algo] += dist_l + class_l
             
-            loss = sum(algo_losses.values())
+            loss = sum([algo_losses[algo] for algo in train_algos]) # only backpropagate for train_algos
             loss.backward()
             optimizer.step()
 
@@ -171,6 +171,7 @@ def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epoch
                 total_samples[algo] += inputs[algo].size(0)
             pbar.update(1)
             loss_dict = {algo: f"{running_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()}
+            loss_dict['train_algos'] = train_algos
             pbar.set_postfix(loss_dict)
 
     epoch_loss = sum(running_loss.values()) / sum(total_samples.values())
@@ -258,6 +259,8 @@ def main(args):
         
     if alg in ["bellman_ford_bfs", "bellman_ford_dijkstra", "bellman_ford_prims"]:
         joint_training = True
+        scheduler = training_config.get('scheduler', {})
+        algorithms = training_config.get('algorithms', [])
     else:
         joint_training = False
 
@@ -315,9 +318,42 @@ def main(args):
     counter = 0  # Counter for patience
     
     for epoch in range(num_epochs):
-        # if we are using joint training then we need to use different training and evaluation functions
+        ''' If we are using joint training then we need to use different training and evaluation functions. Furthermore, we need to specify a scheduler for the joint training. The scheduler is not for the optimizer, but rather decides the scehdule for joint training. It is a dictionary with the following keys:
+        - 'type': the type of schedule. One of 'joint', 'alternating', 'sequential', 'fine_tune'
+                 If 'joint' then all algorithms are trained simultaneously (all losses are backpropagated).
+                 If 'alternating' then each algorithm is trained in turn according to some proportional schedule.
+                 If 'sequential' then each algorithm is trained sequentially, without cycling back to the first algorithm.
+                 If 'fine_tune' then some algorithms are trained first (only their loss is backpropagated), then all are trained jointly (all losses are backpropagated)
+        - 'schedule': a list of integers describing the schedule. Only used if 'alternating', 'sequential' or 'fine_tune'.
+                If 'alternating' then the schedule is a list of integers which describe how many epochs each algorithm should be trained before the schedule repeats.
+                If 'sequential' then the schedule is a list of integers which describe how many epochs each algorithm should be trained before moving on to the next one.
+                If 'fine_tune' then the schedule is a list of integers which describe the epoch at which each algorithm starts to train on.
+        '''
         if joint_training:
-            train_loss = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs)
+            if scheduler['type'] == 'joint':
+                train_algos = algorithms # all algorithms are trained jointly
+                train_loss = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
+            elif scheduler['type'] == 'alternating':
+                assert len(scheduler['schedule']) == len(algorithms) # each algo should have a schedule
+                repeat_every = sum(scheduler['schedule'])
+                cycle_count = epoch % repeat_every
+                # find which algo to train on this epoch based on the cycle count
+                algo_index = np.where(np.array(scheduler['schedule']).cumsum() > cycle_count)[0].min()
+                train_algos = [algorithms[algo_index]]
+                train_loss = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
+            elif scheduler['type'] == 'sequential':
+                assert len(scheduler['schedule']) == len(algorithms) # each algo should have a schedule
+                assert sum(scheduler['schedule']) >= num_epochs # the sum of the schedule should be the total number of epochs
+                # find which algo to train on this epoch based on the cycle count
+                algo_index = np.where(np.array(scheduler['schedule']).cumsum() > epoch)[0].min()
+                train_algos = [algorithms[algo_index]]
+                train_loss = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
+            elif scheduler['type'] == 'fine_tune':
+                assert len(scheduler['schedule']) == len(algorithms) # each algo should have a schedule
+                # this time the scheduler is the epoch at which the corresponding algo starts to train on
+                to_train_idx = np.where(np.array(scheduler['schedule']) <= epoch)[0]
+                train_algos = [algorithms[i] for i in to_train_idx]
+                train_loss = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
         else:
             train_loss = train_one_epoch(model, train_dataloader, optimizer, device, epoch, num_epochs)
         print(f"Epoch {epoch + 1}/{num_epochs}, Training Loss: {train_loss:.4f}")
