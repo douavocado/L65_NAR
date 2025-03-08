@@ -276,17 +276,17 @@ class GNNInterpNetwork(nn.Module):
         
         # Prediction heads
         self.update_classifier = nn.Sequential(
-            nn.Linear(2 * self.msg_dim + self.proj_dim // 4, self.msg_dim),
+            nn.Linear(2 * self.proj_dim + self.proj_dim // 4, self.proj_dim),
             nn.ReLU(),
             nn.Dropout(self.dropout),
-            nn.Linear(self.msg_dim, 1)
+            nn.Linear(self.proj_dim, 1)
         )
         
         self.dist_predictor = nn.Sequential(
-            nn.Linear(2 * self.msg_dim, self.msg_dim),
+            nn.Linear(2 * self.proj_dim, self.proj_dim),
             nn.ReLU(),
             nn.Dropout(self.dropout),
-            nn.Linear(self.msg_dim, 1)
+            nn.Linear(self.proj_dim, 1)
         )
     
     def forward(self, x, edge_w, batch, no_graphs, time_i):
@@ -346,28 +346,28 @@ class GNNInterpNetwork(nn.Module):
                 for t in range(T-1):
                     curr_t_features = gnn_layer(curr_gnn_features[t], edge_encoded, edge_w_graph)
                     curr_gnn_features_list.append(curr_t_features)
-                curr_gnn_features = torch.stack(curr_gnn_features_list, dim=0)  # (T-1, D, msg_dim)
+                curr_gnn_features = torch.stack(curr_gnn_features_list, dim=0)  # (T-1, D, proj_dim)
                 
                 # For next nodes
                 next_gnn_features_list = []
                 for t in range(T-1):
                     next_t_features = gnn_layer(next_gnn_features[t], edge_encoded, edge_w_graph)
                     next_gnn_features_list.append(next_t_features)
-                next_gnn_features = torch.stack(next_gnn_features_list, dim=0)  # (T-1, D, msg_dim)
+                next_gnn_features = torch.stack(next_gnn_features_list, dim=0)  # (T-1, D, proj_dim)
             
             # Predict update sources for all timesteps at once
             # Expand dimensions for broadcasting
-            next_i = next_gnn_features.unsqueeze(2).expand(-1, -1, D, -1)  # (T-1, D, D, msg_dim)
-            curr_j = curr_gnn_features.unsqueeze(1).expand(-1, D, -1, -1)  # (T-1, D, D, msg_dim)
+            next_i = next_gnn_features.unsqueeze(2).expand(-1, -1, D, -1)  # (T-1, D, D, proj_dim)
+            curr_j = curr_gnn_features.unsqueeze(1).expand(-1, D, -1, -1)  # (T-1, D, D, proj_dim)
             
             # Expand edge features for all timesteps
             edge_feats = edge_encoded.unsqueeze(0).expand(T-1, -1, -1, -1)  # (T-1, D, D, proj_dim//4)
             
             # Concatenate features for update classification
-            update_feats = torch.cat([next_i, curr_j, edge_feats], dim=3)  # (T-1, D, D, 2*msg_dim + proj_dim//4)
+            update_feats = torch.cat([next_i, curr_j, edge_feats], dim=3)  # (T-1, D, D, 2*proj_dim + proj_dim//4)
             
             # Reshape for batch processing through the classifier
-            update_feats_flat = update_feats.reshape(-1, 2*self.msg_dim + self.proj_dim//4)
+            update_feats_flat = update_feats.reshape(-1, 2*self.proj_dim + self.proj_dim//4)
             class_logits_flat = self.update_classifier(update_feats_flat).squeeze(-1)  # ((T-1)*D*D)
             class_logits = class_logits_flat.reshape(T-1, D, D)  # (T-1, D, D)
             
@@ -381,8 +381,8 @@ class GNNInterpNetwork(nn.Module):
             graph_class_logits = class_logits.masked_fill(mask_expanded, -1e9)
             
             # Predict distance updates for all timesteps at once
-            dist_feats = torch.cat([curr_gnn_features, next_gnn_features], dim=-1)  # (T-1, D, 2*msg_dim)
-            dist_feats_flat = dist_feats.reshape(-1, 2*self.msg_dim)
+            dist_feats = torch.cat([curr_gnn_features, next_gnn_features], dim=-1)  # (T-1, D, 2*proj_dim)
+            dist_feats_flat = dist_feats.reshape(-1, 2*self.proj_dim)
             dist_preds_flat = self.dist_predictor(dist_feats_flat).squeeze(-1)  # ((T-1)*D)
             graph_dist_preds = dist_preds_flat.reshape(T-1, D)  # (T-1, D)
             
@@ -396,24 +396,24 @@ class GNNInterpNetwork(nn.Module):
 class GNNLayer(nn.Module):
     """Graph Neural Network layer implementing message passing"""
     
-    def __init__(self, node_dim, edge_dim, out_dim):
+    def __init__(self, node_dim, edge_dim, msg_out_dim):
         super().__init__()
         
         # Message function (combines source node and edge features)
         self.message_fn = nn.Sequential(
-            nn.Linear(node_dim + edge_dim, out_dim),
+            nn.Linear(node_dim + edge_dim, msg_out_dim),
             nn.ReLU()
         )
         
         # Update function (combines node features with aggregated messages)
         self.update_fn = nn.Sequential(
-            nn.Linear(node_dim + out_dim, out_dim),
+            nn.Linear(node_dim + msg_out_dim, node_dim),
             nn.ReLU()
         )
         
         # Gating mechanism to control information flow
         self.gate = nn.Sequential(
-            nn.Linear(node_dim + out_dim, out_dim),
+            nn.Linear(node_dim  + msg_out_dim, node_dim),
             nn.Sigmoid()
         )
     
@@ -495,17 +495,17 @@ class GNNJointInterpNetwork(nn.Module):
         ])
         
         self.update_classifiers = {algo: nn.Sequential(
-            nn.Linear(2 * self.msg_dim + self.proj_dim // 4, self.msg_dim),
+            nn.Linear(2 * self.proj_dim + self.proj_dim // 4, self.proj_dim),
             nn.ReLU(),
             nn.Dropout(self.dropout),
-            nn.Linear(self.msg_dim, 1)
+            nn.Linear(self.proj_dim, 1)
         ) for algo in self.algorithms}
 
         self.dist_predictors = {algo: nn.Sequential(
-            nn.Linear(2 * self.msg_dim, self.msg_dim),
+            nn.Linear(2 * self.proj_dim, self.proj_dim),
             nn.ReLU(),
             nn.Dropout(self.dropout),
-            nn.Linear(self.msg_dim, 1)
+            nn.Linear(self.proj_dim, 1)
         ) for algo in self.algorithms}
     
     def forward(self, hidden_states, edge_w, batch, no_graphs, time_i):
@@ -584,28 +584,28 @@ class GNNJointInterpNetwork(nn.Module):
                     for t in range(T-1):
                         curr_t_features = gnn_layer(curr_gnn_features[t], edge_encoded, edge_w_graph)
                         curr_gnn_features_list.append(curr_t_features)
-                    curr_gnn_features = torch.stack(curr_gnn_features_list, dim=0)  # (T-1, D, msg_dim)
+                    curr_gnn_features = torch.stack(curr_gnn_features_list, dim=0)  # (T-1, D, proj_dim)
                     
                     # For next nodes
                     next_gnn_features_list = []
                     for t in range(T-1):
                         next_t_features = gnn_layer(next_gnn_features[t], edge_encoded, edge_w_graph)
                         next_gnn_features_list.append(next_t_features)
-                    next_gnn_features = torch.stack(next_gnn_features_list, dim=0)  # (T-1, D, msg_dim)
+                    next_gnn_features = torch.stack(next_gnn_features_list, dim=0)  # (T-1, D, proj_dim)
                 
                 # Predict update sources for all timesteps at once
                 # Expand dimensions for broadcasting
-                next_i = next_gnn_features.unsqueeze(2).expand(-1, -1, D, -1)  # (T-1, D, D, msg_dim)
-                curr_j = curr_gnn_features.unsqueeze(1).expand(-1, D, -1, -1)  # (T-1, D, D, msg_dim)
+                next_i = next_gnn_features.unsqueeze(2).expand(-1, -1, D, -1)  # (T-1, D, D, proj_dim)
+                curr_j = curr_gnn_features.unsqueeze(1).expand(-1, D, -1, -1)  # (T-1, D, D, proj_dim)
                 
                 # Expand edge features for all timesteps
                 edge_feats = edge_encoded.unsqueeze(0).expand(T-1, -1, -1, -1)  # (T-1, D, D, proj_dim//4)
                 
                 # Concatenate features for update classification
-                update_feats = torch.cat([next_i, curr_j, edge_feats], dim=3)  # (T-1, D, D, 2*msg_dim + proj_dim//4)
+                update_feats = torch.cat([next_i, curr_j, edge_feats], dim=3)  # (T-1, D, D, 2*proj_dim + proj_dim//4)
                 
                 # Reshape for batch processing through the classifier
-                update_feats_flat = update_feats.reshape(-1, 2*self.msg_dim + self.proj_dim//4)
+                update_feats_flat = update_feats.reshape(-1, 2*self.proj_dim + self.proj_dim//4)
                 class_logits_flat = self.update_classifiers[algo](update_feats_flat).squeeze(-1)  # ((T-1)*D*D)
                 class_logits = class_logits_flat.reshape(T-1, D, D)  # (T-1, D, D)
                 
@@ -619,8 +619,8 @@ class GNNJointInterpNetwork(nn.Module):
                 graph_class_logits = class_logits.masked_fill(mask_expanded, -1e9)
                 
                 # Predict distance updates for all timesteps at once
-                dist_feats = torch.cat([curr_gnn_features, next_gnn_features], dim=-1)  # (T-1, D, 2*msg_dim)
-                dist_feats_flat = dist_feats.reshape(-1, 2*self.msg_dim)
+                dist_feats = torch.cat([curr_gnn_features, next_gnn_features], dim=-1)  # (T-1, D, 2*proj_dim)
+                dist_feats_flat = dist_feats.reshape(-1, 2*self.proj_dim)
                 dist_preds_flat = self.dist_predictors[algo](dist_feats_flat).squeeze(-1)  # ((T-1)*D)
                 graph_dist_preds = dist_preds_flat.reshape(T-1, D)  # (T-1, D)
                 
