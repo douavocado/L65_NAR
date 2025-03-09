@@ -61,6 +61,8 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch, num_epochs):
             # class_out is a list of (T-1, D, D) shaped vectors. (D may not be constant across vectors) The number of vectors in the list is equal to no_graphs. For each vector
             # dist_out is a list of (T-1, D) shaped vectors. again D may not be constant across vectors.
             loss = 0
+            dist_loss = 0
+            class_losses = 0
             for i in range(len(class_out)):
                 # print(batch_i, i)
                 dist_ins = dist_out[i] # (T-1, D)
@@ -69,12 +71,14 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch, num_epochs):
                 dist_l = F.mse_loss(dist_ins, upd_d[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])  # Use MSE loss
                 class_l = class_loss(class_ins, upd_pi[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])
                 loss += dist_l + class_l
+                dist_loss += dist_l
+                class_losses += class_l
             loss.backward()
             optimizer.step()
 
             running_loss += loss.item() * inputs.size(0)
-            running_dist_loss += dist_l.item() * inputs.size(0)
-            running_class_loss += class_l.item() * inputs.size(0)
+            running_dist_loss += dist_loss.item() * inputs.size(0)
+            running_class_loss += class_losses.item() * inputs.size(0)
 
             total_samples += inputs.size(0)
             pbar.update(1)
@@ -125,21 +129,57 @@ def evaluate(model, dataloader, device):
 def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epochs, train_algos):
     ''' Train algos is the only algorithms to train on (loss is backpropagated for these algorithms only)'''    
     model.train()
-    running_loss = {algo: 0.0 for algo in dataloader.dataset[0].keys()}
-    total_samples = {algo: 0 for algo in dataloader.dataset[0].keys()}
+    # for the parts of the model that are not train_algos, freeze the parameters
+    # first do it for node encoders
+    for key in model.node_encoders.keys():
+        if key not in train_algos:
+            for param in model.node_encoders[key].parameters():
+                param.requires_grad = False
+        else:
+            for param in model.node_encoders[key].parameters():
+                param.requires_grad = True
+    # then do it for the edge encoders
+    for key in model.edge_encoders.keys():
+        if key not in train_algos:
+            for param in model.edge_encoders[key].parameters():
+                param.requires_grad = False
+        else:
+            for param in model.edge_encoders[key].parameters():
+                param.requires_grad = True
+    # then do it for update_classifiers
+    for key in model.update_classifiers.keys():
+        if key not in train_algos:
+            for param in model.update_classifiers[key].parameters():
+                param.requires_grad = False
+        else:
+            for param in model.update_classifiers[key].parameters():
+                param.requires_grad = True
+    # then do it for dist_predictors
+    for key in model.dist_predictors.keys():
+        if key not in train_algos:
+            for param in model.dist_predictors[key].parameters():
+                param.requires_grad = False
+        else:
+            for param in model.dist_predictors[key].parameters():
+                param.requires_grad = True
+
+    running_loss = {algo: 0.0 for algo in train_algos}
+    running_dist_loss = {algo: 0.0 for algo in train_algos}
+    running_class_loss = {algo: 0.0 for algo in train_algos}
+    total_samples = {algo: 0 for algo in train_algos}
     class_loss = CrossEntropyLoss()
 
     with tqdm(total=len(dataloader), desc=f'Epoch {epoch+1}/{num_epochs}', unit='batch') as pbar:
         for batch in dataloader:
-            batch_i = {algo: batch[algo]['all_cumsum'] for algo in batch.keys()}
-            time_i = {algo: batch[algo]['all_cumsum_timesteps'] for algo in batch.keys()}
-            batch_info = {algo: batch[algo]['batch'] for algo in batch.keys()}
-            no_graphs = {algo: batch[algo]['num_graphs'] for algo in batch.keys()}
-            hidden_states = {algo: batch[algo]['hidden_states'].to(device) for algo in batch.keys()} # dictionary of (T, H, total_D)
-            edge_w = {algo: batch[algo]['edge_weights'].float().to(device) for algo in batch.keys()} # dictionary of (total_D, total_D)
+            batch_i = {algo: batch[algo]['all_cumsum'] for algo in train_algos}
+            time_i = {algo: batch[algo]['all_cumsum_timesteps'] for algo in train_algos}
+            batch_info = {algo: batch[algo]['batch'] for algo in train_algos}
+            no_graphs = {algo: batch[algo]['num_graphs'] for algo in train_algos}
+            hidden_states = {algo: batch[algo]['hidden_states'].to(device) for algo in train_algos} # dictionary of (T, H, total_D)
+            edge_w = {algo: batch[algo]['edge_weights'].float().to(device) for algo in train_algos} # dictionary of (total_D, total_D)
             
-            upd_pi = {algo: batch[algo]['upd_pi'].long().to(device) for algo in batch.keys()} # dictionary of (T, total_D)
-            upd_d = {algo: batch[algo]['upd_d'].float().to(device) for algo in batch.keys()} # dictionary of (T, total_D)
+            upd_pi = {algo: batch[algo]['upd_pi'].long().to(device) for algo in train_algos} # dictionary of (T, total_D)
+            upd_d = {algo: batch[algo]['upd_d'].float().to(device) for algo in train_algos} # dictionary of (T, total_D)
 
             # Prepare inputs and targets
             inputs = hidden_states
@@ -149,8 +189,10 @@ def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epoch
             # class_out_dic is a dictionary of class_out, dist_out for each algorithm
             # class_out is a list of (T-1, D, D) shaped vectors. (D may not be constant across vectors) The number of vectors in the list is equal to no_graphs. For each vector
             # dist_out is a list of (T-1, D) shaped vectors. again D may not be constant across vectors.
-            algo_losses = {algo : 0 for algo in batch.keys()}
-            for algo in class_out_dic.keys():
+            algo_losses = {algo : 0 for algo in train_algos}
+            dist_losses = {algo : 0 for algo in train_algos}
+            class_losses = {algo : 0 for algo in train_algos}
+            for algo in train_algos:
                 class_out = class_out_dic[algo]
                 dist_out = dist_out_dic[algo]
                 for i in range(len(class_out)):
@@ -161,17 +203,23 @@ def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epoch
                     dist_l = F.mse_loss(dist_ins, upd_d[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])  # Use MSE loss
                     class_l = class_loss(class_ins, upd_pi[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])
                     algo_losses[algo] += dist_l + class_l
+                    dist_losses[algo] += dist_l
+                    class_losses[algo] += class_l
             
-            loss = sum([algo_losses[algo] for algo in train_algos]) # only backpropagate for train_algos
+            loss = sum(algo_losses.values()) # only backpropagate for train_algos
             loss.backward()
             optimizer.step()
 
             for algo in algo_losses.keys():
                 running_loss[algo] += algo_losses[algo].item() * inputs[algo].size(0)
+                running_dist_loss[algo] += dist_losses[algo].item() * inputs[algo].size(0)
+                running_class_loss[algo] += class_losses[algo].item() * inputs[algo].size(0)
                 total_samples[algo] += inputs[algo].size(0)
             pbar.update(1)
             loss_dict = {algo: f"{running_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()}
             loss_dict['train_algos'] = train_algos
+            loss_dict.update({f'dist_loss_{algo}': f"{running_dist_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()})
+            loss_dict.update({f'class_loss_{algo}': f"{running_class_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()})
             pbar.set_postfix(loss_dict)
 
     epoch_loss = sum(running_loss.values()) / sum(total_samples.values())
@@ -180,26 +228,26 @@ def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epoch
 def evaluate_joint(model, dataloader, device):
     ''' Here dataloaders output a dictionary of dictionaries. The outer dictionary has keys as the algorithm names and the inner dictionary has keys as the algorithm names and the values are the dataloader for that algorithm. '''
     model.eval()
-    running_loss = {algo: 0.0 for algo in dataloader.dataset[0].keys()}
-    total_samples = {algo: 0 for algo in dataloader.dataset[0].keys()}
+    algorithms = list(dataloader.dataset[0].keys())
+    running_loss = {algo: 0.0 for algo in algorithms}
+    total_samples = {algo: 0 for algo in algorithms}
     class_loss = CrossEntropyLoss()
 
     with torch.no_grad():
         for batch in dataloader:
-            batch_i = {algo: batch[algo]['all_cumsum'] for algo in batch.keys()}
-            time_i = {algo: batch[algo]['all_cumsum_timesteps'] for algo in batch.keys()}
-            batch_info = {algo: batch[algo]['batch'] for algo in batch.keys()}
-            no_graphs = {algo: batch[algo]['num_graphs'] for algo in batch.keys()}  
-            hidden_states = {algo: batch[algo]['hidden_states'].to(device) for algo in batch.keys()} # dictionary of (T, H, total_D)
-            edge_w = {algo: batch[algo]['edge_weights'].float().to(device) for algo in batch.keys()} # dictionary of (total_D, total_D)
+            batch_i = {algo: batch[algo]['all_cumsum'] for algo in algorithms}
+            time_i = {algo: batch[algo]['all_cumsum_timesteps'] for algo in algorithms}
+            batch_info = {algo: batch[algo]['batch'] for algo in algorithms}
+            no_graphs = {algo: batch[algo]['num_graphs'] for algo in algorithms}  
+            hidden_states = {algo: batch[algo]['hidden_states'].to(device) for algo in algorithms} # dictionary of (T, H, total_D)
+            edge_w = {algo: batch[algo]['edge_weights'].float().to(device) for algo in algorithms} # dictionary of (total_D, total_D)
             
-            upd_pi = {algo: batch[algo]['upd_pi'].long().to(device) for algo in batch.keys()} # dictionary of (T, total_D)
-            upd_d = {algo: batch[algo]['upd_d'].float().to(device) for algo in batch.keys()} # dictionary of (T, total_D)   
+            upd_pi = {algo: batch[algo]['upd_pi'].long().to(device) for algo in algorithms} # dictionary of (T, total_D)
+            upd_d = {algo: batch[algo]['upd_d'].float().to(device) for algo in algorithms} # dictionary of (T, total_D)   
 
             inputs = hidden_states
 
             class_out_dic, dist_out_dic = model(inputs, edge_w, batch_info, no_graphs, time_i)
-            algo_losses = {algo : 0 for algo in batch.keys()}
             for algo in class_out_dic.keys():
                 class_out = class_out_dic[algo]
                 dist_out = dist_out_dic[algo]
@@ -209,14 +257,14 @@ def evaluate_joint(model, dataloader, device):
 
                     dist_l = F.mse_loss(dist_ins, upd_d[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])  # Use MSE loss
                     class_l = class_loss(class_ins, upd_pi[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])
-                    algo_losses[algo] += dist_l + class_l
+                    running_loss[algo] += (dist_l + class_l).item() * class_ins.size(1)
             
-            loss = sum(algo_losses.values())
-            running_loss[algo] += loss.item() * inputs[algo].size(0)
-            total_samples[algo] += inputs[algo].size(0) 
+                total_samples[algo] += inputs[algo].size(0) 
 
     avg_loss = sum(running_loss.values()) / sum(total_samples.values())
-    return avg_loss 
+    print(running_loss)
+    loss_dict = {algo: f"{running_loss[algo]/total_samples[algo]:.4f}" for algo in algorithms if total_samples[algo] > 0}
+    return avg_loss , loss_dict
 
 def main(args):
     # Load configuration
@@ -361,10 +409,13 @@ def main(args):
 
         # Validation
         if joint_training:
-            val_loss = evaluate_joint(model, val_dataloader, device)
+            val_loss, val_loss_dict = evaluate_joint(model, val_dataloader, device)
+            print(f"Epoch {epoch+1}/{num_epochs}, Total Validation Loss: {val_loss:.4f}")
+            for algo in val_loss_dict.keys():
+                print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss for {algo}: " + val_loss_dict[algo])
         else:
             val_loss = evaluate(model, val_dataloader, device)
-        print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
+            print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
         val_losses.append(val_loss)
         
         # Save model if validation loss improves
@@ -391,6 +442,18 @@ def main(args):
             counter += 1  # Increment counter if no improvement
             
         # Early stopping check
+        if joint_training:
+            if scheduler['type'] == 'joint':
+                pass
+            elif scheduler['type'] == 'alternating':
+                if epoch < sum(scheduler['schedule']):
+                    counter = 0 # reset counter to make sure all algos are trained one round
+            elif scheduler['type'] == 'sequential':
+                pass
+            elif scheduler['type'] == 'fine_tune':
+                if epoch <= max(scheduler['schedule']):
+                    counter = 0 # reset counter to make sure all algos are trained one round
+        
         if counter >= patience:
             print(f"Early stopping triggered after {epoch+1} epochs (no improvement for {patience} epochs)")
             break
@@ -415,6 +478,6 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, choices=["all", "16", "8", "OOD"], help="Dataset to use (overrides config)")
     parser.add_argument("--model_name", type=str, help="Model name for saving (defaults to model_type)")
     parser.add_argument("-r", "--resume", action='store_true', help="Resume from previously trained weights")
-    parser.add_argument("--algo", type=str, choices=["bellman_ford", "dijkstra", "prims", "bellman_ford_bfs"], help="Algorithm to train on (overrides config)")
+    parser.add_argument("--algo", type=str, choices=["bellman_ford", "dijkstra", "prims", "bellman_ford_bfs", "bfs"], help="Algorithm to train on (overrides config)")
     args = parser.parse_args()
     main(args)

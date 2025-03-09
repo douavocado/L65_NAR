@@ -3,7 +3,7 @@ model_type: "gnn"
 
 model:
   hidden_dim: 128
-  proj_dim: 128
+  proj_dim: 64
   msg_dim: 32
   gnn_layers: 2
   dropout: 0.1

@@ -53,7 +53,7 @@ def visualize_graph(datapoint, title=None, figsize=(8, 6)):
         for i in range(len(adj_matrix)):
             for j in range(len(adj_matrix)):
                 if adj_matrix_no_self[i, j] > 0 and edge_weights[i, j] > 0:
-                    edge_labels[(i, j)] = edge_weights[i, j]
+                    edge_labels[(i, j)] = round(edge_weights[i, j], 2)
         nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=10, ax=ax)
     
     # Set title if provided

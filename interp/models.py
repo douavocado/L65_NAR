@@ -477,15 +477,15 @@ class GNNJointInterpNetwork(nn.Module):
         self.algorithms = algorithms
         
         # For each algorithm, create separate node, edge encoders and prediction heads, but same message passing layers
-        self.node_encoders = {algo: nn.Sequential(
+        self.node_encoders = nn.ModuleDict({algo: nn.Sequential(
             nn.Linear(hidden_dim, self.proj_dim),
             nn.ReLU(),
             nn.Dropout(self.dropout)
-        ) for algo in self.algorithms}
-        self.edge_encoders = {algo: nn.Sequential(
+        ) for algo in self.algorithms})
+        self.edge_encoders = nn.ModuleDict({algo: nn.Sequential(
             nn.Linear(1, self.proj_dim // 4),
             nn.ReLU()
-        ) for algo in self.algorithms}
+        ) for algo in self.algorithms})
         
         
         # Message passing layers
@@ -494,19 +494,19 @@ class GNNJointInterpNetwork(nn.Module):
             for _ in range(gnn_layers)
         ])
         
-        self.update_classifiers = {algo: nn.Sequential(
+        self.update_classifiers = nn.ModuleDict({algo: nn.Sequential(
             nn.Linear(2 * self.proj_dim + self.proj_dim // 4, self.proj_dim),
             nn.ReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.proj_dim, 1)
-        ) for algo in self.algorithms}
+        ) for algo in self.algorithms})
 
-        self.dist_predictors = {algo: nn.Sequential(
+        self.dist_predictors = nn.ModuleDict({algo: nn.Sequential(
             nn.Linear(2 * self.proj_dim, self.proj_dim),
             nn.ReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.proj_dim, 1)
-        ) for algo in self.algorithms}
+        ) for algo in self.algorithms})
     
     def forward(self, hidden_states, edge_w, batch, no_graphs, time_i):
         """
