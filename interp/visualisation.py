@@ -83,3 +83,74 @@ def visualize_graph(datapoint, title=None, figsize=(8, 6)):
     plt.tight_layout()
     
     return fig, ax
+
+def visualize_graph_from_adjacency_matrix(adjacency_matrix, weight_matrix=None, start_node=None):
+    """
+    Visualizes a graph with explicit arrows and labeled edge weights (adjacent).
+
+    Args:
+        adjacency_matrix: Adjacency matrix (NumPy array).
+        weight_matrix: Optional weight matrix (NumPy array).
+        start_node: Optional starting node to highlight with a different color.
+    """
+
+    adjacency_matrix = np.array(adjacency_matrix)
+    if adjacency_matrix.shape[0] != adjacency_matrix.shape[1]:
+        raise ValueError("Adjacency matrix must be square.")
+    num_nodes = adjacency_matrix.shape[0]
+
+    if weight_matrix is None:
+        weight_matrix = np.ones_like(adjacency_matrix)
+    else:
+        weight_matrix = np.array(weight_matrix)
+        if weight_matrix.shape != adjacency_matrix.shape:
+            raise ValueError("Weight matrix must have the same dimensions.")
+
+    directed_graph = nx.DiGraph()
+    undirected_graph = nx.Graph()
+
+    for i in range(num_nodes):
+        directed_graph.add_node(i)
+        undirected_graph.add_node(i)
+
+    for i in range(num_nodes):
+        for j in range(num_nodes):
+            if i != j:
+                if adjacency_matrix[i, j] != 0:
+                    weight = round(weight_matrix[i, j], 2)
+                    if adjacency_matrix[j, i] != 0:
+                        if i < j:
+                            undirected_graph.add_edge(i, j, weight=weight)
+                    else:
+                        directed_graph.add_edge(i, j, weight=weight)
+
+    pos = nx.spring_layout(undirected_graph)  # Layout based on undirected
+
+    plt.figure(figsize=(8, 6))
+
+    # Draw undirected edges (no arrows)
+    nx.draw_networkx_edges(undirected_graph, pos, edge_color='gray', width=2, arrows=False)
+    edge_labels_undirected = nx.get_edge_attributes(undirected_graph, 'weight')
+    # Use label_pos and rotate for adjacent labels
+    nx.draw_networkx_edge_labels(undirected_graph, pos, edge_labels=edge_labels_undirected,
+                                 label_pos=0.3, rotate=True)
+
+    # Draw directed edges with explicit arrows
+    nx.draw_networkx_edges(directed_graph, pos, edge_color='black', width=1,
+                           arrowstyle='->', arrowsize=15)
+    edge_labels_directed = nx.get_edge_attributes(directed_graph, 'weight')
+    # Use label_pos and rotate for adjacent labels
+    nx.draw_networkx_edge_labels(directed_graph, pos, edge_labels=edge_labels_directed,
+                                 label_pos=0.3, rotate=True)
+
+    # Create node color list - highlight start node if provided
+    node_colors = ['skyblue'] * num_nodes
+    if start_node is not None and 0 <= start_node < num_nodes:
+        node_colors[start_node] = 'red'  # Color the start node differently
+
+    nx.draw_networkx_nodes(directed_graph, pos, node_color=node_colors, node_size=500)
+    nx.draw_networkx_labels(directed_graph, pos)
+
+    plt.title("Graph Visualization")
+    plt.axis('off')
+    plt.show()

@@ -75,6 +75,7 @@ class Sampler(abc.ABC):
       seed: Optional[int] = None,
       track_max_steps: bool = True,
       truncate_decimals: int | None = None,
+      from_graphs = None,
       **kwargs,
   ):
     """Initializes a `Sampler`.
@@ -97,6 +98,7 @@ class Sampler(abc.ABC):
         not a concern, set `track_max_steps` to False.
       truncate_decimals: If not None, the sampler will truncate the input data
         of the algorithm.
+      from_graphs: If not None, the sampler will only run the algorithm on these graphs.
       **kwargs: Algorithm kwargs.
     """
 
@@ -109,6 +111,13 @@ class Sampler(abc.ABC):
     self._kwargs = kwargs
     self._track_max_steps = track_max_steps
     self._truncate_decimals = truncate_decimals
+    if from_graphs is None:
+      self._from_graphs = []
+      self._use_from_graphs = False
+    else:
+      self._from_graphs = from_graphs
+      self._use_from_graphs = True
+      assert len(self._from_graphs) >= num_samples, "number of provided from_graphs must be greater than or equal to num_samples"
 
     if num_samples < 0:
       logging.log_first_n(
@@ -130,6 +139,7 @@ class Sampler(abc.ABC):
       logging.info('Creating a dataset with %i samples.', num_samples)
       (self._inputs, self._outputs, self._hints,
        self._lengths) = self._make_batch(num_samples, spec, 0, algorithm, *args,
+                                         use_from_graphs=self._use_from_graphs,
                                          **kwargs)
 
   def __init_subclass__(cls, **kwargs):
@@ -142,15 +152,20 @@ class Sampler(abc.ABC):
       )
 
   def _make_batch(self, num_samples: int, spec: specs.Spec, min_length: int,
-                  algorithm: Algorithm, *args, **kwargs):
+                  algorithm: Algorithm, *args, use_from_graphs=False, **kwargs):
     """Generate a batch of data."""
     inputs = []
     outputs = []
     hints = []
-
-    for _ in range(num_samples):
-      data = self._sample_data(*args, **kwargs)
-      data = self._trunc_array(data)
+    if use_from_graphs:
+      assert self._from_graphs is not None, "from_graphs must be provided if use_from_graphs is True"
+    for j in range(num_samples):
+      if use_from_graphs:
+        data = self._from_graphs[j]
+      else:
+        data = self._sample_data(*args, **kwargs)
+        data = self._trunc_array(data)
+        self._from_graphs.append(data)
       _, probes = algorithm(*data)
       inp, outp, hint = probing.split_stages(probes, spec)
       inputs.append(inp)

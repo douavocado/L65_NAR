@@ -296,13 +296,13 @@ class GNNInterpNetwork(nn.Module):
         self.node_encoder = nn.Sequential(
             nn.Linear(hidden_dim, self.proj_dim),
             nn.ReLU(),
-            nn.Dropout(self.dropout)
+            nn.Dropout(self.dropout),
         )
         
         # Edge encoder
         self.edge_encoder = nn.Sequential(
             nn.Linear(1, self.proj_dim // 4),
-            nn.ReLU()
+            nn.ReLU(),
         )
         
         # Message passing layers

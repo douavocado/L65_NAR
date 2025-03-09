@@ -2,6 +2,10 @@ import argparse
 import os
 
 import clrs
+from clrs._src.samplers import SAMPLERS
+from clrs._src.specs import SPECS
+from clrs._src import algorithms as alg_funcs
+
 import jax
 import numpy as np
 import h5py
@@ -9,7 +13,7 @@ from tqdm import tqdm
 from copy import deepcopy
 from sklearn.model_selection import train_test_split
 
-AVAILABLE_ALGORITHMS = ["bfs", "bellman_ford", "dijkstra", "prims"]
+AVAILABLE_ALGORITHMS = ["bfs", "bellman_ford", "dijkstra", "mst_prim"]
 
 # --- Saving Data ---
 def save_to_hdf5(data, filename, nested=True):
@@ -86,6 +90,11 @@ def load_model(model_params, dummy_traj, spec, weights_path):
 
     return model
 
+def unitise_edge_weights(edge_weights):
+    ''' given a (D,D) edge_weights matrix, turn every non-zero entry into 1. Used for bfs where no edge weights are present.'''
+    new_edge_weights = np.copy(edge_weights)
+    new_edge_weights[new_edge_weights > 0] = 1.0
+    return new_edge_weights
 
 def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
     model_params = get_model_params()
@@ -93,18 +102,28 @@ def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
     rng = np.random.RandomState(42)
     rng_key = jax.random.PRNGKey(rng.randint(2**32, dtype=np.int64))
 
+    from_graphs = None
+
     for length_idx, length in enumerate(lengths):
         new_rng_key, rng_key = jax.random.split(rng_key)    
 
         # Create data for all samples of this length for each algorithm
         for algo in algorithms:
             # Create sampler for this length
-            sampler, spec = clrs.build_sampler(
-                algo,
-                seed=rng.randint(2**32, dtype=np.int64),
-                num_samples=num_samples_per_length,
-                length=length,
-            )
+            # get sampler and spec
+            algorithm_fn = getattr(alg_funcs, algo)
+            spec = SPECS[algo]
+            # see if we have already sampled random graphs we can use
+            if from_graphs is None: # then we need to sample random graphs            
+                sampler = SAMPLERS[algo](algorithm=algorithm_fn,spec=spec, length=length, num_samples=num_samples_per_length)
+                from_graphs = deepcopy(sampler._from_graphs)
+            else:
+                if algo == "bfs":
+                    # need to make sure edge_weights are unitised
+                    bfs_from_graphs = [[unitise_edge_weights(graph), start] for graph, start in from_graphs]
+                    sampler = SAMPLERS[algo](algorithm=algorithm_fn,spec=spec, length=length, num_samples=num_samples_per_length, from_graphs=bfs_from_graphs)
+                else:
+                    sampler = SAMPLERS[algo](algorithm=algorithm_fn,spec=spec, length=length, num_samples=num_samples_per_length, from_graphs=from_graphs)
 
             # Get dummy trajectory and initialize model
             weights_path = f'best_{algo}.pkl'
@@ -119,19 +138,8 @@ def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
                 feedback_input_names = [f.name for f in feedback.features.inputs]
                 feedback_output_names = [f.name for f in feedback.outputs]
 
-                if args.self:
-                    graph_adj = feedback.features.inputs[feedback_input_names.index("adj")].data[item] # (D, D)
-                    # make sure diagonal is all 1s
-                    graph_adj[np.arange(graph_adj.shape[0]), np.arange(graph_adj.shape[0])] = 1
-                    edge_weights = feedback.features.inputs[feedback_input_names.index("A")].data[item] # (D, D)
-                    # make sure diagonal is all 1s
-                    edge_weights[np.arange(edge_weights.shape[0]), np.arange(edge_weights.shape[0])] = 1
-                else:
-                    graph_adj = feedback.features.inputs[feedback_input_names.index("adj")].data[item] # (D, D)
-                    edge_weights = feedback.features.inputs[feedback_input_names.index("A")].data[item] # (D, D)
-                    # make sure diagonal is all 0s
-                    graph_adj[np.arange(graph_adj.shape[0]), np.arange(graph_adj.shape[0])] = 0
-                    edge_weights[np.arange(edge_weights.shape[0]), np.arange(edge_weights.shape[0])] = 0
+                graph_adj = feedback.features.inputs[feedback_input_names.index("adj")].data[item] # (D, D)
+                edge_weights = feedback.features.inputs[feedback_input_names.index("A")].data[item] # (D, D)
                 
                 start_node = feedback.features.inputs[feedback_input_names.index("s")].data[item] # (D)
                 
@@ -155,28 +163,38 @@ def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
                 else:
                     cutoff_idx = raw_upd_pi.shape[0]  # Use all if no zero vectors found
                 
-                # if cutoff_idx is less than 2, we should make upd_pi and upd_d have length 2, but pad upd_pi with arange(length) and upd_d with zeros
-                # similarly if we are using buffer, we should pad upd_pi with arange(length) and upd_d with zeros for the corresponding amount.
+                # if cutoff_idx is less than 2, we should make upd_pi and upd_d have length 2, but pad upd_pi with arange(length)
+                # and upd_d with the last vector of upd_d if bfs, otherwise pad with zeros
+                # similarly if we are using buffer, we should pad upd_pi with arange(length) and upd_d with the last vector of upd_d for the corresponding amount.
                 actual_cutoff_idx = max(2, args.buffer + cutoff_idx)
                 if cutoff_idx < actual_cutoff_idx:
                     if actual_cutoff_idx > raw_upd_pi.shape[0]:
-                        # we need to pad upd_pi with arange(length) and upd_d with zeros for the corresponding amount.
-                        upd_pi = np.concatenate([raw_upd_pi, np.arange(raw_upd_pi.shape[1])[np.newaxis,:,:] * np.ones((actual_cutoff_idx - raw_upd_pi.shape[0], raw_upd_pi.shape[1], 1))], axis=0)
-                        upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1], 1))], axis=0)
+                        # we need to pad upd_pi with arange(length) and upd_d for the corresponding amount.
+                        upd_pi = np.concatenate([raw_upd_pi, np.arange(raw_upd_pi.shape[1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_pi.shape[0], raw_upd_pi.shape[1]))], axis=0)
+                        if algo == "bfs":
+                            upd_d = np.concatenate([raw_upd_d, np.copy(raw_upd_d[cutoff_idx-1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
+                        else:
+                            upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
                     else:
                         upd_pi = raw_upd_pi[:actual_cutoff_idx] 
                         upd_d = raw_upd_d[:actual_cutoff_idx]
                     for i in range(actual_cutoff_idx - cutoff_idx):
                         upd_pi[-i-1] = np.arange(raw_upd_pi.shape[1])
-                        upd_d[-i-1] = np.zeros(raw_upd_d.shape[1], dtype=np.float32)
-                    cutoff_idx = actual_cutoff_idx
+                        if algo == "bfs":
+                            upd_d[-i-1] = np.copy(raw_upd_d[cutoff_idx-1])
+                        else:
+                            upd_d[-i-1] = np.zeros(raw_upd_d.shape[1])
                 
                 else:
                     # Take only the first n entries where n is the cutoff index
                     upd_pi = raw_upd_pi[:cutoff_idx]
                     upd_d = raw_upd_d[:cutoff_idx]
-
-                hidden_states = np.stack([hist[i].hiddens[item] for i in range(cutoff_idx)]).transpose((0,2,1)) # (T, H, D)
+                
+                hidden_states = np.stack([hist[i].hiddens[item] for i in range(min(actual_cutoff_idx, len(hist)))]).transpose((0,2,1)) # (T, H, D)
+                # if we are using buffer or length of hidden states is less than 2, we need to pad last time steps with the last known hidden state
+                # it is important that we do not cutoff at cutoff_idx, as this gives the model information about how many steps the algorithm takes.
+                if actual_cutoff_idx > hidden_states.shape[0]:
+                    hidden_states = np.concatenate([hidden_states, np.copy(hidden_states[-1])[np.newaxis,:,:] * np.ones((actual_cutoff_idx - hidden_states.shape[0], hidden_states.shape[1], hidden_states.shape[2]))], axis=0)
                 
                 datapoint = {
                     'hidden_states': deepcopy(hidden_states),
@@ -192,7 +210,13 @@ def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
                     data[item + length_idx*num_samples_per_length] = {}  
                 
                 data[item + length_idx*num_samples_per_length][algo] = deepcopy(datapoint)
-    
+            
+            # at the end of the algo loop, if we are not using synchronous samples, we need to reset the from_graphs
+            if not args.sync:
+                from_graphs = None
+
+        from_graphs = None
+
     return data
 
 def create_individual_dataset(lengths, algo, num_samples_per_length, args):
@@ -224,18 +248,8 @@ def create_individual_dataset(lengths, algo, num_samples_per_length, args):
             feedback_input_names = [f.name for f in feedback.features.inputs]
             feedback_output_names = [f.name for f in feedback.outputs]
 
-            if args.self:
-                graph_adj = feedback.features.inputs[feedback_input_names.index("adj")].data[item] # (D, D)
-                edge_weights = feedback.features.inputs[feedback_input_names.index("A")].data[item] # (D, D)
-                # make sure diagonal is all 1s
-                graph_adj[np.arange(graph_adj.shape[0]), np.arange(graph_adj.shape[0])] = 1
-                edge_weights[np.arange(edge_weights.shape[0]), np.arange(edge_weights.shape[0])] = 1
-            else:
-                graph_adj = feedback.features.inputs[feedback_input_names.index("adj")].data[item] # (D, D)
-                edge_weights = feedback.features.inputs[feedback_input_names.index("A")].data[item] # (D, D)
-                # make sure diagonal is all 0s
-                graph_adj[np.arange(graph_adj.shape[0]), np.arange(graph_adj.shape[0])] = 0
-                edge_weights[np.arange(edge_weights.shape[0]), np.arange(edge_weights.shape[0])] = 0
+            graph_adj = feedback.features.inputs[feedback_input_names.index("adj")].data[item] # (D, D)
+            edge_weights = feedback.features.inputs[feedback_input_names.index("A")].data[item] # (D, D)
             
             start_node = feedback.features.inputs[feedback_input_names.index("s")].data[item] # (D)
             
@@ -258,27 +272,37 @@ def create_individual_dataset(lengths, algo, num_samples_per_length, args):
             else:
                 cutoff_idx = raw_upd_pi.shape[0]  # Use all if no zero vectors found
             
-            # if cutoff_idx is less than 2, we should make upd_pi and upd_d have length 2, but pad upd_pi with arange(length) and upd_d with zeros
-            # similarly if we are using buffer, we should pad upd_pi with arange(length) and upd_d with zeros for the corresponding amount.
+            # if cutoff_idx is less than 2, we should make upd_pi and upd_d have length 2, but pad upd_pi with arange(length)
+            # and upd_d with the last vector of upd_d if bfs, otherwise pad with zeros
+            # similarly if we are using buffer, we should pad upd_pi with arange(length) and upd_d for the corresponding amount.
             actual_cutoff_idx = max(2, args.buffer + cutoff_idx)
             if cutoff_idx < actual_cutoff_idx:
                 if actual_cutoff_idx > raw_upd_pi.shape[0]:
-                    # we need to pad upd_pi with arange(length) and upd_d with zeros for the corresponding amount.
-                    upd_pi = np.concatenate([raw_upd_pi, np.arange(raw_upd_pi.shape[1])[np.newaxis,:,:] * np.ones((actual_cutoff_idx - raw_upd_pi.shape[0], raw_upd_pi.shape[1], 1))], axis=0)
-                    upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1], 1))], axis=0)
+                    # we need to pad upd_pi with arange(length) and upd_d with the last vector of upd_d if bfs, otherwise pad with zeros
+                    upd_pi = np.concatenate([raw_upd_pi, np.arange(raw_upd_pi.shape[1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_pi.shape[0], raw_upd_pi.shape[1]))], axis=0)
+                    if algo == "bfs":
+                        upd_d = np.concatenate([raw_upd_d, np.copy(raw_upd_d[cutoff_idx-1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
+                    else:
+                        upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
                 else:
                     upd_pi = raw_upd_pi[:actual_cutoff_idx]
                     upd_d = raw_upd_d[:actual_cutoff_idx]
                 for i in range(actual_cutoff_idx - cutoff_idx):
                     upd_pi[-i-1] = np.arange(raw_upd_pi.shape[1])
-                    upd_d[-i-1] = np.zeros(raw_upd_d.shape[1], dtype=np.float32)
-                cutoff_idx = actual_cutoff_idx
+                    if algo == "bfs":
+                        upd_d[-i-1] = np.copy(raw_upd_d[cutoff_idx-1])
+                    else:
+                        upd_d[-i-1] = np.zeros(raw_upd_d.shape[1])
             else:
                 # Take only the first n entries where n is the cutoff index                
                 upd_pi = raw_upd_pi[:cutoff_idx]
                 upd_d = raw_upd_d[:cutoff_idx]
 
-            hidden_states = np.stack([hist[i].hiddens[item] for i in range(cutoff_idx)]).transpose((0,2,1)) # (T, H, D)
+            hidden_states = np.stack([hist[i].hiddens[item] for i in range(min(actual_cutoff_idx, len(hist)))]).transpose((0,2,1)) # (T, H, D)
+            # if we are using buffer or length of hidden states is less than 2, we need to pad last time steps with the last known hidden state
+            # it is important that we do not cutoff at cutoff_idx, as this gives the model information about how many steps the algorithm takes.
+            if actual_cutoff_idx > hidden_states.shape[0]:
+                hidden_states = np.concatenate([hidden_states, np.copy(hidden_states[-1])[np.newaxis,:,:] * np.ones((actual_cutoff_idx - hidden_states.shape[0], hidden_states.shape[1], hidden_states.shape[2]))], axis=0)
             
             datapoint = {
                 'hidden_states': np.copy(hidden_states),
@@ -315,7 +339,10 @@ def main(args):
         # creating joint dataset
         data = create_joint_dataset(lengths, algorithms, num_samples_per_length, args)
         # determine save path
-        save_root = os.path.join("data", "_".join(algorithms))
+        if args.sync:
+            save_root = os.path.join("data", "_".join(algorithms) + "_sync")
+        else:
+            save_root = os.path.join("data", "_".join(algorithms))
         if not os.path.exists(save_root):
             os.makedirs(save_root)
         
@@ -359,7 +386,6 @@ if __name__ == "__main__":
     parser.add_argument("-t", "--train", action="store_true", help="Create dataset for training only.")
     parser.add_argument("-s", "--size", type=int, default=5000, help="The size of the dataset to create.")
     parser.add_argument("--sync", action="store_true", help="Only relevant for joint dataset creation, whether to have synchronous samples for each algorithm.")
-    parser.add_argument("--self", action="store_true", help="Whether to include self connections in the dataset.")
     parser.add_argument("--buffer", type=int, default=0, help= "Buffer size for how many trailing zeros for each algorithm.")
     parser.add_argument("--split", type=float, default=0.2, help= "The fraction of the dataset to use for testing.")
     args = parser.parse_args()

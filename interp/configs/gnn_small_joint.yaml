@@ -10,8 +10,8 @@ model:
 
 training:
   scheduler:
-    type: "joint"
-    schedule: [0, 0]
+    type: "fine_tune"
+    schedule: [10, 0]
   learning_rate: 5e-4
   batch_size: 8
   num_epochs: 150

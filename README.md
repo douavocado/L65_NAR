@@ -32,7 +32,7 @@ Handles data loading and preprocessing:
 Training loop implementation:
 - Model training and evaluation procedures
 - Loss functions for algorithm interpretation
-- Optimization and learning rate scheduling
+- Optimisation and learning rate scheduling
 
 ### `create_dataset.py`
 Creating datasets for interpretation.
@@ -44,7 +44,7 @@ The repository supports interpretation of various graph algorithms from the CLRS
 - Breadth-First Search (BFS)
 - Bellman-Ford
 - Dijkstra's Algorithm
-- And other graph traversal and shortest path algorithms
+- Prim's Algorithm (MST)
 
 ## Usage
 Instructions for training and evaluating models are provided in the respective script files. 

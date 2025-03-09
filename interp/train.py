@@ -60,9 +60,10 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch, num_epochs):
             class_out, dist_out = model(inputs, edge_w, batch_info, no_graphs, time_i)
             # class_out is a list of (T-1, D, D) shaped vectors. (D may not be constant across vectors) The number of vectors in the list is equal to no_graphs. For each vector
             # dist_out is a list of (T-1, D) shaped vectors. again D may not be constant across vectors.
-            loss = 0
-            dist_loss = 0
-            class_losses = 0
+            loss = 0 # batch loss  
+            dist_loss = 0 # batch dist loss
+            class_losses = 0 # batch class loss
+            samples = 0 # number of samples in the batch
             for i in range(len(class_out)):
                 # print(batch_i, i)
                 dist_ins = dist_out[i] # (T-1, D)
@@ -70,17 +71,18 @@ def train_one_epoch(model, dataloader, optimizer, device, epoch, num_epochs):
 
                 dist_l = F.mse_loss(dist_ins, upd_d[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])  # Use MSE loss
                 class_l = class_loss(class_ins, upd_pi[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])
-                loss += dist_l + class_l
-                dist_loss += dist_l
-                class_losses += class_l
+                loss += (dist_l + class_l) * class_ins.size(1) * class_ins.size(0)
+                dist_loss += dist_l * class_ins.size(1) * class_ins.size(0)
+                class_losses += class_l * class_ins.size(1) * class_ins.size(0)
+                samples += class_ins.size(1) * class_ins.size(0)
             loss.backward()
             optimizer.step()
 
-            running_loss += loss.item() * inputs.size(0)
-            running_dist_loss += dist_loss.item() * inputs.size(0)
-            running_class_loss += class_losses.item() * inputs.size(0)
+            running_loss += loss.item()
+            running_dist_loss += dist_loss.item()
+            running_class_loss += class_losses.item()
 
-            total_samples += inputs.size(0)
+            total_samples += samples
             pbar.update(1)
             pbar.set_postfix({'dist_loss': f'{running_dist_loss/total_samples:.4f}', 'class_loss': f'{running_class_loss/total_samples:.4f}', 'loss': f'{running_loss/total_samples:.4f}'})
 
@@ -116,7 +118,7 @@ def evaluate(model, dataloader, device):
 
                 dist_l = F.mse_loss(dist_ins, upd_d[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])  # Use MSE loss
                 class_l = class_loss(class_ins, upd_pi[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])
-                
+
                 running_loss += (dist_l + class_l).item() * class_ins.size(0) * class_ins.size(1)
                 total_samples += class_ins.size(0) * class_ins.size(1) # the total number of samples is not the number of graphs, but rather the number of nodes in the graphs times the number of timesteps evaluated (T-1)
 
@@ -222,7 +224,7 @@ def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epoch
 
     loss_dict = {algo: running_loss[algo]/total_samples[algo] for algo in train_algos if total_samples[algo] > 0}
     epoch_loss = sum(loss_dict.values())/len(loss_dict)
-    return epoch_loss
+    return epoch_loss, loss_dict
 
 def evaluate_joint(model, dataloader, device):
     ''' Here dataloaders output a dictionary of dictionaries. The outer dictionary has keys as the algorithm names and the inner dictionary has keys as the algorithm names and the values are the dataloader for that algorithm. '''
@@ -328,7 +330,10 @@ def main(args):
     config_save_path = os.path.join(checkpoint_dir, f"{model_name}_{dataset_name}_config.json")
     
     # Data loading
-    data_root = os.path.join("data", alg)
+    if args.sync:
+        data_root = os.path.join("data", alg + "_sync")
+    else:
+        data_root = os.path.join("data", alg)
     
     if dataset_name == "all":
         train_pth = os.path.join(data_root, "interp_data_all.h5")
@@ -386,7 +391,7 @@ def main(args):
         if joint_training:            
             if scheduler['type'] == 'joint':
                 train_algos = algorithms # all algorithms are trained jointly
-                train_loss = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
+                train_loss, loss_dict = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
             elif scheduler['type'] == 'alternating':
                 assert len(scheduler['schedule']) == len(algorithms) # each algo should have a schedule
                 repeat_every = sum(scheduler['schedule'])
@@ -394,31 +399,33 @@ def main(args):
                 # find which algo to train on this epoch based on the cycle count
                 algo_index = np.where(np.array(scheduler['schedule']).cumsum() > cycle_count)[0].min()
                 train_algos = [algorithms[algo_index]]
-                train_loss = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
+                train_loss, loss_dict = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
             elif scheduler['type'] == 'sequential':
                 assert len(scheduler['schedule']) == len(algorithms) # each algo should have a schedule
                 assert sum(scheduler['schedule']) >= num_epochs # the sum of the schedule should be the total number of epochs
                 # find which algo to train on this epoch based on the cycle count
                 algo_index = np.where(np.array(scheduler['schedule']).cumsum() > epoch)[0].min()
                 train_algos = [algorithms[algo_index]]
-                train_loss = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
+                train_loss, loss_dict = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
             elif scheduler['type'] == 'fine_tune':
                 assert len(scheduler['schedule']) == len(algorithms) # each algo should have a schedule
                 # this time the scheduler is the epoch at which the corresponding algo starts to train on
                 to_train_idx = np.where(np.array(scheduler['schedule']) <= epoch)[0]
                 train_algos = [algorithms[i] for i in to_train_idx]
-                train_loss = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
+                train_loss, loss_dict = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
+            
+            loss_str = " | ".join([f"{algo}: {loss_dict[algo]:.4f}" for algo in loss_dict.keys()])
+            print(f"Epoch {epoch + 1}/{num_epochs}, Training Loss: {train_loss:.4f} | {loss_str}")
         else:
             train_loss = train_one_epoch(model, train_dataloader, optimizer, device, epoch, num_epochs)
-        print(f"Epoch {epoch + 1}/{num_epochs}, Training Loss: {train_loss:.4f}")
+            print(f"Epoch {epoch + 1}/{num_epochs}, Training Loss: {train_loss:.4f}")
         train_losses.append(train_loss)
 
         # Validation
         if joint_training:
-            val_loss, val_loss_dict = evaluate_joint(model, val_dataloader, device)
-            print(f"Epoch {epoch+1}/{num_epochs}, Total Validation Loss: {val_loss:.4f}")
-            for algo in val_loss_dict.keys():
-                print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss for {algo}: {val_loss_dict[algo]:.4f}")
+            val_loss, val_loss_dict = evaluate_joint(model, val_dataloader, device) 
+            loss_str = " | ".join([f"{algo}: {val_loss_dict[algo]:.4f}" for algo in val_loss_dict.keys()])
+            print(f"Epoch {epoch+1}/{num_epochs}, Total Validation Loss: {val_loss:.4f} | {loss_str}")
         else:
             val_loss = evaluate(model, val_dataloader, device)
             print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
@@ -467,9 +474,8 @@ def main(args):
     # Final evaluation
     if joint_training:
         train_loss, loss_dict = evaluate_joint(model, val_dataloader, device)
-        print(f"Final Validation Loss: {train_loss:.4f}")
-        for algo in loss_dict.keys():
-            print(f"Final Validation Loss for {algo}: " + loss_dict[algo])
+        loss_str = " | ".join([f"{algo}: {loss_dict[algo]:.4f}" for algo in loss_dict.keys()])
+        print(f"Final Validation Loss: {train_loss:.4f} | {loss_str}")
     else:
         train_loss = evaluate(model, val_dataloader, device)
         print(f"Final Validation Loss: {train_loss:.4f}")
@@ -487,7 +493,8 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, choices=["all", "16", "8", "OOD"], help="Dataset to use (overrides config)")
     parser.add_argument("--model_name", type=str, help="Model name for saving (defaults to model_type)")
     parser.add_argument("-r", "--resume", action='store_true', help="Resume from previously trained weights")
-    parser.add_argument("--algo", type=str, choices=["bellman_ford", "dijkstra", "prims", "bellman_ford_bfs", "bfs"], help="Algorithm to train on (overrides config)")
+    parser.add_argument("--algo", type=str, choices=["bellman_ford", "dijkstra", "mst_prim", "bellman_ford_bfs", "bfs"], help="Algorithm to train on (overrides config)")
     parser.add_argument("--device", type=str, choices=["cpu", "cuda"], help="Device to use.")
+    parser.add_argument("--sync", action='store_true', help="Use synchronous datasets.")
     args = parser.parse_args()
     main(args)
