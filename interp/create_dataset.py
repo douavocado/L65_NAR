@@ -151,18 +151,26 @@ def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
                 # We include a buffer of trailing zeros if specified, to allow the model to also receive data for what stationary transitions look like.
                 non_zero_indices = np.where(~is_zero_vector)[0]
                 if len(non_zero_indices) > 0:
-                    cutoff_idx = min(non_zero_indices[-1] + 1 + args.buffer, raw_upd_pi.shape[0])  # +1 to include the last non-zero vector
+                    cutoff_idx = non_zero_indices[-1] + 1  # +1 to include the last non-zero vector
                 else:
                     cutoff_idx = raw_upd_pi.shape[0]  # Use all if no zero vectors found
                 
                 # if cutoff_idx is less than 2, we should make upd_pi and upd_d have length 2, but pad upd_pi with arange(length) and upd_d with zeros
-                if cutoff_idx < 2:
-                    upd_pi = raw_upd_pi[:2]
-                    upd_d = raw_upd_d[:2]
-                    for i in range(2-cutoff_idx):
+                # similarly if we are using buffer, we should pad upd_pi with arange(length) and upd_d with zeros for the corresponding amount.
+                actual_cutoff_idx = max(2, args.buffer + cutoff_idx)
+                if cutoff_idx < actual_cutoff_idx:
+                    if actual_cutoff_idx > raw_upd_pi.shape[0]:
+                        # we need to pad upd_pi with arange(length) and upd_d with zeros for the corresponding amount.
+                        upd_pi = np.concatenate([raw_upd_pi, np.arange(raw_upd_pi.shape[1])[np.newaxis,:,:] * np.ones((actual_cutoff_idx - raw_upd_pi.shape[0], raw_upd_pi.shape[1], 1))], axis=0)
+                        upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1], 1))], axis=0)
+                    else:
+                        upd_pi = raw_upd_pi[:actual_cutoff_idx] 
+                        upd_d = raw_upd_d[:actual_cutoff_idx]
+                    for i in range(actual_cutoff_idx - cutoff_idx):
                         upd_pi[-i-1] = np.arange(raw_upd_pi.shape[1])
                         upd_d[-i-1] = np.zeros(raw_upd_d.shape[1], dtype=np.float32)
-                    cutoff_idx = 2
+                    cutoff_idx = actual_cutoff_idx
+                
                 else:
                     # Take only the first n entries where n is the cutoff index
                     upd_pi = raw_upd_pi[:cutoff_idx]
@@ -184,7 +192,8 @@ def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
                     data[item + length_idx*num_samples_per_length] = {}  
                 
                 data[item + length_idx*num_samples_per_length][algo] = deepcopy(datapoint)
-
+    
+    return data
 
 def create_individual_dataset(lengths, algo, num_samples_per_length, args):
     model_params = get_model_params()
@@ -245,21 +254,27 @@ def create_individual_dataset(lengths, algo, num_samples_per_length, args):
             # We include a buffer of trailing zeros if specified, to allow the model to also receive data for what stationary transitions look like.
             non_zero_indices = np.where(~is_zero_vector)[0]
             if len(non_zero_indices) > 0:
-                cutoff_idx = min(non_zero_indices[-1] + 1 + args.buffer, raw_upd_pi.shape[0])   # +1 to include the last non-zero vector
+                cutoff_idx = non_zero_indices[-1] + 1  # +1 to include the last non-zero vector
             else:
                 cutoff_idx = raw_upd_pi.shape[0]  # Use all if no zero vectors found
             
             # if cutoff_idx is less than 2, we should make upd_pi and upd_d have length 2, but pad upd_pi with arange(length) and upd_d with zeros
-            if cutoff_idx < 2:
-                upd_pi = raw_upd_pi[:2]
-                upd_d = raw_upd_d[:2]
-                for i in range(2-cutoff_idx):
+            # similarly if we are using buffer, we should pad upd_pi with arange(length) and upd_d with zeros for the corresponding amount.
+            actual_cutoff_idx = max(2, args.buffer + cutoff_idx)
+            if cutoff_idx < actual_cutoff_idx:
+                if actual_cutoff_idx > raw_upd_pi.shape[0]:
+                    # we need to pad upd_pi with arange(length) and upd_d with zeros for the corresponding amount.
+                    upd_pi = np.concatenate([raw_upd_pi, np.arange(raw_upd_pi.shape[1])[np.newaxis,:,:] * np.ones((actual_cutoff_idx - raw_upd_pi.shape[0], raw_upd_pi.shape[1], 1))], axis=0)
+                    upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1], 1))], axis=0)
+                else:
+                    upd_pi = raw_upd_pi[:actual_cutoff_idx]
+                    upd_d = raw_upd_d[:actual_cutoff_idx]
+                for i in range(actual_cutoff_idx - cutoff_idx):
                     upd_pi[-i-1] = np.arange(raw_upd_pi.shape[1])
                     upd_d[-i-1] = np.zeros(raw_upd_d.shape[1], dtype=np.float32)
-                cutoff_idx = 2
+                cutoff_idx = actual_cutoff_idx
             else:
-                # Take only the first n entries where n is the cutoff index
-                
+                # Take only the first n entries where n is the cutoff index                
                 upd_pi = raw_upd_pi[:cutoff_idx]
                 upd_d = raw_upd_d[:cutoff_idx]
 
@@ -279,7 +294,7 @@ def create_individual_dataset(lengths, algo, num_samples_per_length, args):
     return data
 
 def main(args):
-    if args.dataset == "ALL":
+    if args.dataset == "all":
         lengths = list(range(4,17))
     elif args.dataset == "8":
         lengths = [8]
@@ -315,18 +330,20 @@ def main(args):
     # split into train and test
     train_data, test_data = train_test_split(data, test_size=args.split, random_state=42)
     
-    train_save_name = "interp_data_" + args.dataset
-    val_save_name = "interp_data_" + args.dataset + "_eval"
+    train_save_name = "interp_data_" + args.dataset + ".h5"
+    val_save_name = "interp_data_" + args.dataset + "_eval.h5"
     train_save_path = os.path.join(save_root, train_save_name)
     val_save_path = os.path.join(save_root, val_save_name)
     
-    # save train and test data
-    print(f"Saving data to {train_save_path} and {val_save_path}")
+    # save train and test data    
     if args.eval: # only save eval data
+        print(f"Saving data to {val_save_path}")
         save_to_hdf5(test_data, val_save_path, nested=joint)
     elif args.train: # only save train data
+        print(f"Saving data to {train_save_path}")
         save_to_hdf5(train_data, train_save_path, nested=joint)
     else: # save train and eval data
+        print(f"Saving data to {train_save_path} and {val_save_path}")
         save_to_hdf5(train_data, train_save_path, nested=joint)
         save_to_hdf5(test_data, val_save_path, nested=joint)
     

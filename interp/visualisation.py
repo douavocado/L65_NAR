@@ -10,8 +10,8 @@ def visualize_graph(datapoint, title=None, figsize=(8, 6)):
     
     Args:
         datapoint: Dictionary containing graph data with keys:
-            - graph_adj: Adjacency matrix
-            - start_node: One-hot encoded start node
+            - graph_adj: Adjacency matrix (numpy array or torch tensor)
+            - start_node: One-hot encoded start node (numpy array or torch tensor)
             - gt_pi: Ground truth predecessor array (optional, for coloring edges)
         title: Optional title for the plot
         figsize: Figure size as (width, height) tuple
@@ -20,9 +20,21 @@ def visualize_graph(datapoint, title=None, figsize=(8, 6)):
         matplotlib figure and axes objects
     """
     
-    # Extract graph data
+    # Extract graph data and convert to numpy if needed
     adj_matrix = datapoint['graph_adj']
     start_node_onehot = datapoint['start_node']
+    
+    # Convert torch tensors to numpy if needed
+    if hasattr(adj_matrix, 'detach') and hasattr(adj_matrix, 'cpu') and hasattr(adj_matrix, 'numpy'):
+        adj_matrix = adj_matrix.detach().cpu().numpy()
+    elif hasattr(adj_matrix, 'numpy'):
+        adj_matrix = adj_matrix.numpy()
+        
+    if hasattr(start_node_onehot, 'detach') and hasattr(start_node_onehot, 'cpu') and hasattr(start_node_onehot, 'numpy'):
+        start_node_onehot = start_node_onehot.detach().cpu().numpy()
+    elif hasattr(start_node_onehot, 'numpy'):
+        start_node_onehot = start_node_onehot.numpy()
+    
     start_node = np.argmax(start_node_onehot)
     
     # Remove self-connections (diagonal elements)
@@ -49,6 +61,13 @@ def visualize_graph(datapoint, title=None, figsize=(8, 6)):
     # Add edge weights if available
     if 'edge_weights' in datapoint:
         edge_weights = datapoint['edge_weights']
+        
+        # Convert torch tensor to numpy if needed
+        if hasattr(edge_weights, 'detach') and hasattr(edge_weights, 'cpu') and hasattr(edge_weights, 'numpy'):
+            edge_weights = edge_weights.detach().cpu().numpy()
+        elif hasattr(edge_weights, 'numpy'):
+            edge_weights = edge_weights.numpy()
+            
         edge_labels = {}
         for i in range(len(adj_matrix)):
             for j in range(len(adj_matrix)):
