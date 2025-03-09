@@ -10,12 +10,12 @@ model:
 
 training:
   scheduler:
-    type: "fine_tune"
-    schedule: [15, 0]
+    type: "joint"
+    schedule: [0, 0]
   learning_rate: 5e-4
   batch_size: 8
   num_epochs: 150
-  patience: 10
+  patience: 4
   algo: "bellman_ford_bfs"
   algorithms: ["bellman_ford", "bfs"]
   model_name: "gnn_large"

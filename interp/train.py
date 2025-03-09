@@ -217,9 +217,8 @@ def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epoch
                 total_samples[algo] += inputs[algo].size(0)
             pbar.update(1)
             loss_dict = {algo: f"{running_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()}
-            loss_dict['train_algos'] = train_algos
-            loss_dict.update({f'dist_loss_{algo}': f"{running_dist_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()})
-            loss_dict.update({f'class_loss_{algo}': f"{running_class_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()})
+            loss_dict.update({f'dl_{algo[:3]}': f"{running_dist_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()})
+            loss_dict.update({f'cl_{algo[:3]}': f"{running_class_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()})
             pbar.set_postfix(loss_dict)
 
     epoch_loss = sum(running_loss.values()) / sum(total_samples.values())
@@ -262,7 +261,6 @@ def evaluate_joint(model, dataloader, device):
                 total_samples[algo] += inputs[algo].size(0) 
 
     avg_loss = sum(running_loss.values()) / sum(total_samples.values())
-    print(running_loss)
     loss_dict = {algo: f"{running_loss[algo]/total_samples[algo]:.4f}" for algo in algorithms if total_samples[algo] > 0}
     return avg_loss , loss_dict
 
@@ -460,10 +458,13 @@ def main(args):
 
     # Final evaluation
     if joint_training:
-        train_loss = evaluate_joint(model, val_dataloader, device)
+        train_loss, loss_dict = evaluate_joint(model, val_dataloader, device)
+        print(f"Final Validation Loss: {train_loss:.4f}")
+        for algo in loss_dict.keys():
+            print(f"Final Validation Loss for {algo}: " + loss_dict[algo])
     else:
         train_loss = evaluate(model, val_dataloader, device)
-    print(f"Final Validation Loss: {train_loss:.4f}")
+        print(f"Final Validation Loss: {train_loss:.4f}")
 
     train_dataset.close()  # Close HDF5 file
 

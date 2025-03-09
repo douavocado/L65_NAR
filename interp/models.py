@@ -97,6 +97,43 @@ class DummyModel(nn.Module):
 
         return class_out, dist_out
 
+class DummyJointModel(nn.Module):    
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, hidden_states, edge_w, batch, no_graphs, time_i):
+        """
+        Same input/output interface as InterpNetwork, but uses GNN message passing
+        for improved modeling of graph algorithm interpretations. Also here hidden_states is a dictionary of node features for each algorithm.
+        whereas in InterpNetwork, x was a single tensor. This is because we are using different node encoders for each algorithm.
+        The key to the dictionary is the algorithm name.
+        Edge_w is also a dictionary,
+        batch is also a dictonary,
+        no_graphs is also a dictionary,
+        time_i is also a dictionary
+        """
+        out_class_dic = {algo: None for algo in hidden_states.keys()}
+        out_dist_dic = {algo: None for algo in hidden_states.keys()}   
+        for algo in hidden_states.keys():
+            class_out = []
+            dist_out = []
+            for g in range(no_graphs[algo]):
+                T = time_i[algo][g+1] - time_i[algo][g]
+                # Get indices for this graph
+                graph_mask = (batch[algo] == g)
+                D = graph_mask.sum()
+
+                identity = torch.eye(D, dtype=torch.float)
+                identity = identity.reshape(1, D, D)
+                class_logits = identity.repeat(T-1, 1, 1)
+                class_out.append(class_logits)
+                dist_out.append(torch.zeros((T-1,D)))
+
+            out_class_dic[algo] = class_out
+            out_dist_dic[algo] = dist_out
+
+        return out_class_dic, out_dist_dic
+
 class InterpNetwork(nn.Module): 
     def __init__(self, hidden_dim: int, proj_dim: int = 128, dropout: float = 0.1):
         super().__init__()
