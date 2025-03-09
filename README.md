@@ -8,7 +8,7 @@ Some code from the `algorithms/graph.py` has been modified to create extra label
 ## Repository Structure
 
 ### Data Folder
-The `data` folder contains processed interpretation dataset files used for training and evaluation. See `CreateDataset.ipynb` for details of data generation`.
+The `data` folder contains processed interpretation dataset files used for training and evaluation. See `interp/create_dataset.py` for details of data generation`.
 - Preprocessed algorithm execution hiddenstates
 - Graph structures and features
 
@@ -34,6 +34,10 @@ Training loop implementation:
 - Loss functions for algorithm interpretation
 - Optimization and learning rate scheduling
 
+### `create_dataset.py`
+Creating datasets for interpretation.
+- Joint algo dataset creation and single algo creation
+
 
 ## Algorithms
 The repository supports interpretation of various graph algorithms from the CLRS dataset, including:
@@ -46,4 +50,5 @@ The repository supports interpretation of various graph algorithms from the CLRS
 Instructions for training and evaluating models are provided in the respective script files. 
 - Main training run on `train.py`
 - Testing and visualisation on `train.ipynb`
-- Dataset creation for interpretation networks in `CreateDataset.ipynb`
+- Dataset creation for interpretation networks in `create_dataset.py`
+- Dataset visualisation for interpretation networks in `CreateDataset.ipynb`
