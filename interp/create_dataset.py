@@ -301,7 +301,7 @@ def main(args):
     elif args.dataset == "16":
         lengths = [16]
     elif args.dataset == "OOD":
-        lengths = [32, 64, 128, 256, 512, 1024]
+        lengths = [32, 64, 128]
     
     num_samples = args.size
     num_samples_per_length = num_samples // len(lengths)

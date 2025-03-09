@@ -110,17 +110,15 @@ def evaluate(model, dataloader, device):
             inputs = hidden_states
             
             class_out, dist_out = model(inputs, edge_w, batch_info, no_graphs, time_i)
-            loss = 0
             for i in range(len(class_out)):
                 dist_ins = dist_out[i] # (T-1, D)
                 class_ins = class_out[i].permute((0,2,1)) # (T-1, D, D) second dimension is the source node
 
                 dist_l = F.mse_loss(dist_ins, upd_d[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])  # Use MSE loss
                 class_l = class_loss(class_ins, upd_pi[time_i[i]+1:time_i[i+1],batch_i[i]:batch_i[i+1]])
-                loss += dist_l + class_l
-
-            running_loss += loss.item() * inputs.size(0)
-            total_samples += inputs.size(0)
+                
+                running_loss += (dist_l + class_l).item() * class_ins.size(0) * class_ins.size(1)
+                total_samples += class_ins.size(0) * class_ins.size(1) # the total number of samples is not the number of graphs, but rather the number of nodes in the graphs times the number of timesteps evaluated (T-1)
 
     avg_loss = running_loss / total_samples
 
@@ -167,7 +165,7 @@ def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epoch
     running_dist_loss = {algo: 0.0 for algo in train_algos}
     running_class_loss = {algo: 0.0 for algo in train_algos}
     total_samples = {algo: 0 for algo in train_algos}
-    class_loss = CrossEntropyLoss()
+    class_loss_metric = CrossEntropyLoss()
 
     with tqdm(total=len(dataloader), desc=f'Epoch {epoch+1}/{num_epochs}', unit='batch') as pbar:
         for batch in dataloader:
@@ -189,39 +187,41 @@ def train_one_epoch_joint(model, dataloader, optimizer, device, epoch, num_epoch
             # class_out_dic is a dictionary of class_out, dist_out for each algorithm
             # class_out is a list of (T-1, D, D) shaped vectors. (D may not be constant across vectors) The number of vectors in the list is equal to no_graphs. For each vector
             # dist_out is a list of (T-1, D) shaped vectors. again D may not be constant across vectors.
-            algo_losses = {algo : 0 for algo in train_algos}
-            dist_losses = {algo : 0 for algo in train_algos}
-            class_losses = {algo : 0 for algo in train_algos}
+            algo_losses = {algo : 0 for algo in train_algos} # losses for the batch
+            dist_losses = {algo : 0 for algo in train_algos} # losses for the batch
+            class_losses = {algo : 0 for algo in train_algos} # losses for the batch
+            samples = {algo : 0 for algo in train_algos} # number of samples for the batch
             for algo in train_algos:
                 class_out = class_out_dic[algo]
                 dist_out = dist_out_dic[algo]
                 for i in range(len(class_out)):
-                    # print(batch_i, i)
                     dist_ins = dist_out[i] # (T-1, D)
                     class_ins = class_out[i].permute((0,2,1)) # (T-1, D, D) second dimension is the source node
 
                     dist_l = F.mse_loss(dist_ins, upd_d[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])  # Use MSE loss
-                    class_l = class_loss(class_ins, upd_pi[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])
-                    algo_losses[algo] += dist_l + class_l
-                    dist_losses[algo] += dist_l
-                    class_losses[algo] += class_l
-            
+                    class_l = class_loss_metric(class_ins, upd_pi[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])
+                    algo_losses[algo] += (dist_l + class_l) * class_ins.size(1) * class_ins.size(0)
+                    dist_losses[algo] += dist_l *  class_ins.size(1) * class_ins.size(0)
+                    class_losses[algo] += class_l * class_ins.size(1) * class_ins.size(0)
+                    samples[algo] += class_ins.size(1) * class_ins.size(0) # the total number of samples is not the number of graphs, but rather the number of nodes in the graphs times the number of timesteps evaluated (T-1)
             loss = sum(algo_losses.values()) # only backpropagate for train_algos
             loss.backward()
             optimizer.step()
 
             for algo in algo_losses.keys():
-                running_loss[algo] += algo_losses[algo].item() * inputs[algo].size(0)
-                running_dist_loss[algo] += dist_losses[algo].item() * inputs[algo].size(0)
-                running_class_loss[algo] += class_losses[algo].item() * inputs[algo].size(0)
-                total_samples[algo] += inputs[algo].size(0)
+                running_loss[algo] += algo_losses[algo].item()
+                running_dist_loss[algo] += dist_losses[algo].item()
+                running_class_loss[algo] += class_losses[algo].item()
+                total_samples[algo] += samples[algo]
+
             pbar.update(1)
             loss_dict = {algo: f"{running_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()}
             loss_dict.update({f'dl_{algo[:3]}': f"{running_dist_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()})
             loss_dict.update({f'cl_{algo[:3]}': f"{running_class_loss[algo]/total_samples[algo]:.4f}" for algo in algo_losses.keys()})
             pbar.set_postfix(loss_dict)
 
-    epoch_loss = sum(running_loss.values()) / sum(total_samples.values())
+    loss_dict = {algo: running_loss[algo]/total_samples[algo] for algo in train_algos if total_samples[algo] > 0}
+    epoch_loss = sum(loss_dict.values())/len(loss_dict)
     return epoch_loss
 
 def evaluate_joint(model, dataloader, device):
@@ -230,7 +230,7 @@ def evaluate_joint(model, dataloader, device):
     algorithms = list(dataloader.dataset[0].keys())
     running_loss = {algo: 0.0 for algo in algorithms}
     total_samples = {algo: 0 for algo in algorithms}
-    class_loss = CrossEntropyLoss()
+    class_loss_metric = CrossEntropyLoss()
 
     with torch.no_grad():
         for batch in dataloader:
@@ -255,13 +255,12 @@ def evaluate_joint(model, dataloader, device):
                     class_ins = class_out[i].permute((0,2,1)) # (T-1, D, D) second dimension is the source node
 
                     dist_l = F.mse_loss(dist_ins, upd_d[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])  # Use MSE loss
-                    class_l = class_loss(class_ins, upd_pi[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])
-                    running_loss[algo] += (dist_l + class_l).item() * class_ins.size(1)
-            
-                total_samples[algo] += inputs[algo].size(0) 
+                    class_l = class_loss_metric(class_ins, upd_pi[algo][time_i[algo][i]+1:time_i[algo][i+1],batch_i[algo][i]:batch_i[algo][i+1]])
+                    running_loss[algo] += (dist_l + class_l).item() * class_ins.size(1) * class_ins.size(0)
+                    total_samples[algo] += class_ins.size(1) * class_ins.size(0) # the total number of samples is not the number of graphs, but rather the number of nodes in the graphs times the number of timesteps evaluated (T-1)
 
-    avg_loss = sum(running_loss.values()) / sum(total_samples.values())
-    loss_dict = {algo: f"{running_loss[algo]/total_samples[algo]:.4f}" for algo in algorithms if total_samples[algo] > 0}
+    loss_dict = {algo: running_loss[algo]/total_samples[algo] for algo in algorithms if total_samples[algo] > 0}
+    avg_loss = sum(loss_dict.values())/len(loss_dict)  
     return avg_loss , loss_dict
 
 def main(args):
@@ -305,12 +304,21 @@ def main(args):
         
     if alg in ["bellman_ford_bfs", "bellman_ford_dijkstra", "bellman_ford_prims"]:
         joint_training = True
-        scheduler = training_config.get('scheduler', {})
-        algorithms = training_config.get('algorithms', [])
+        scheduler = training_config.get('scheduler', {"type": "joint"})
+        algorithms = training_config.get('algorithms', ["bellman_ford", "bfs"])
+        print("Performing joint training on the following algorithms: ", algorithms)
+        print("Using schedule for joint training: ", scheduler)
     else:
         joint_training = False
+        print("Performing single algorithm training on the following algorithm: ", alg)
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if args.device == "cuda":
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        else:
+            raise ValueError("CUDA is not available")
+    else:
+        device = torch.device("cpu")
     print(f"Using device: {device}")
     
     # Model name and paths
@@ -329,7 +337,7 @@ def main(args):
     elif dataset_name == "8":
         train_pth = os.path.join(data_root, "interp_data_8.h5")
     elif dataset_name == "OOD":
-        train_pth = os.path.join(data_root, "interp_data_OOD_20_64.h5")
+        train_pth = os.path.join(data_root, "interp_data_OOD.h5")
     else:
         raise ValueError(f"Dataset {dataset_name} not found")
 
@@ -375,7 +383,7 @@ def main(args):
                 If 'sequential' then the schedule is a list of integers which describe how many epochs each algorithm should be trained before moving on to the next one.
                 If 'fine_tune' then the schedule is a list of integers which describe the epoch at which each algorithm starts to train on.
         '''
-        if joint_training:
+        if joint_training:            
             if scheduler['type'] == 'joint':
                 train_algos = algorithms # all algorithms are trained jointly
                 train_loss = train_one_epoch_joint(model, train_dataloader, optimizer, device, epoch, num_epochs, train_algos=train_algos)
@@ -410,7 +418,7 @@ def main(args):
             val_loss, val_loss_dict = evaluate_joint(model, val_dataloader, device)
             print(f"Epoch {epoch+1}/{num_epochs}, Total Validation Loss: {val_loss:.4f}")
             for algo in val_loss_dict.keys():
-                print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss for {algo}: " + val_loss_dict[algo])
+                print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss for {algo}: {val_loss_dict[algo]:.4f}")
         else:
             val_loss = evaluate(model, val_dataloader, device)
             print(f"Epoch {epoch+1}/{num_epochs}, Validation Loss: {val_loss:.4f}")
@@ -480,5 +488,6 @@ if __name__ == "__main__":
     parser.add_argument("--model_name", type=str, help="Model name for saving (defaults to model_type)")
     parser.add_argument("-r", "--resume", action='store_true', help="Resume from previously trained weights")
     parser.add_argument("--algo", type=str, choices=["bellman_ford", "dijkstra", "prims", "bellman_ford_bfs", "bfs"], help="Algorithm to train on (overrides config)")
+    parser.add_argument("--device", type=str, choices=["cpu", "cuda"], help="Device to use.")
     args = parser.parse_args()
     main(args)
