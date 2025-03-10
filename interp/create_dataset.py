@@ -139,7 +139,13 @@ def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
                 feedback_output_names = [f.name for f in feedback.outputs]
 
                 graph_adj = feedback.features.inputs[feedback_input_names.index("adj")].data[item] # (D, D)
+                # We should make sure edge_weights do not have self connections.
+                # if algo == "bfs":
+                #     edge_weights = np.copy(graph_adj)
+                #     edge_weights[np.arange(edge_weights.shape[0]), np.arange(edge_weights.shape[0])] = 1.0
+                # else:
                 edge_weights = feedback.features.inputs[feedback_input_names.index("A")].data[item] # (D, D)
+                edge_weights[np.arange(edge_weights.shape[0]), np.arange(edge_weights.shape[0])] = 0.0
                 
                 start_node = feedback.features.inputs[feedback_input_names.index("s")].data[item] # (D)
                 
@@ -164,26 +170,26 @@ def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
                     cutoff_idx = raw_upd_pi.shape[0]  # Use all if no zero vectors found
                 
                 # if cutoff_idx is less than 2, we should make upd_pi and upd_d have length 2, but pad upd_pi with arange(length)
-                # and upd_d with the last vector of upd_d if bfs, otherwise pad with zeros
+                # and upd_d with the last vector pad with zeros
                 # similarly if we are using buffer, we should pad upd_pi with arange(length) and upd_d with the last vector of upd_d for the corresponding amount.
                 actual_cutoff_idx = max(2, args.buffer + cutoff_idx)
                 if cutoff_idx < actual_cutoff_idx:
                     if actual_cutoff_idx > raw_upd_pi.shape[0]:
                         # we need to pad upd_pi with arange(length) and upd_d for the corresponding amount.
                         upd_pi = np.concatenate([raw_upd_pi, np.arange(raw_upd_pi.shape[1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_pi.shape[0], raw_upd_pi.shape[1]))], axis=0)
-                        if algo == "bfs":
-                            upd_d = np.concatenate([raw_upd_d, np.copy(raw_upd_d[cutoff_idx-1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
-                        else:
-                            upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
+                        # if algo == "bfs":
+                        #     upd_d = np.concatenate([raw_upd_d, np.copy(raw_upd_d[cutoff_idx-1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
+                        # else:
+                        upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
                     else:
                         upd_pi = raw_upd_pi[:actual_cutoff_idx] 
                         upd_d = raw_upd_d[:actual_cutoff_idx]
                     for i in range(actual_cutoff_idx - cutoff_idx):
                         upd_pi[-i-1] = np.arange(raw_upd_pi.shape[1])
-                        if algo == "bfs":
-                            upd_d[-i-1] = np.copy(raw_upd_d[cutoff_idx-1])
-                        else:
-                            upd_d[-i-1] = np.zeros(raw_upd_d.shape[1])
+                        # if algo == "bfs":
+                        #     upd_d[-i-1] = np.copy(raw_upd_d[cutoff_idx-1])
+                        # else:
+                        upd_d[-i-1] = np.zeros(raw_upd_d.shape[1])
                 
                 else:
                     # Take only the first n entries where n is the cutoff index
@@ -249,7 +255,13 @@ def create_individual_dataset(lengths, algo, num_samples_per_length, args):
             feedback_output_names = [f.name for f in feedback.outputs]
 
             graph_adj = feedback.features.inputs[feedback_input_names.index("adj")].data[item] # (D, D)
+            # We should make sure edge_weights do not have self connections.
+            # if algo == "bfs":
+            #     edge_weights = np.copy(graph_adj)
+            #     edge_weights[np.arange(edge_weights.shape[0]), np.arange(edge_weights.shape[0])] = 1.0
+            # else:
             edge_weights = feedback.features.inputs[feedback_input_names.index("A")].data[item] # (D, D)
+            edge_weights[np.arange(edge_weights.shape[0]), np.arange(edge_weights.shape[0])] = 0.0
             
             start_node = feedback.features.inputs[feedback_input_names.index("s")].data[item] # (D)
             
@@ -273,26 +285,26 @@ def create_individual_dataset(lengths, algo, num_samples_per_length, args):
                 cutoff_idx = raw_upd_pi.shape[0]  # Use all if no zero vectors found
             
             # if cutoff_idx is less than 2, we should make upd_pi and upd_d have length 2, but pad upd_pi with arange(length)
-            # and upd_d with the last vector of upd_d if bfs, otherwise pad with zeros
+            # and upd_d with the last vector of upd_d  pad with zeros
             # similarly if we are using buffer, we should pad upd_pi with arange(length) and upd_d for the corresponding amount.
             actual_cutoff_idx = max(2, args.buffer + cutoff_idx)
             if cutoff_idx < actual_cutoff_idx:
                 if actual_cutoff_idx > raw_upd_pi.shape[0]:
-                    # we need to pad upd_pi with arange(length) and upd_d with the last vector of upd_d if bfs, otherwise pad with zeros
+                    # we need to pad upd_pi with arange(length) and upd_d with the last vector of upd_d pad with zeros
                     upd_pi = np.concatenate([raw_upd_pi, np.arange(raw_upd_pi.shape[1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_pi.shape[0], raw_upd_pi.shape[1]))], axis=0)
-                    if algo == "bfs":
-                        upd_d = np.concatenate([raw_upd_d, np.copy(raw_upd_d[cutoff_idx-1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
-                    else:
-                        upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
+                    # if algo == "bfs":
+                    #     upd_d = np.concatenate([raw_upd_d, np.copy(raw_upd_d[cutoff_idx-1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
+                    # 
+                    upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
                 else:
                     upd_pi = raw_upd_pi[:actual_cutoff_idx]
                     upd_d = raw_upd_d[:actual_cutoff_idx]
                 for i in range(actual_cutoff_idx - cutoff_idx):
                     upd_pi[-i-1] = np.arange(raw_upd_pi.shape[1])
-                    if algo == "bfs":
-                        upd_d[-i-1] = np.copy(raw_upd_d[cutoff_idx-1])
-                    else:
-                        upd_d[-i-1] = np.zeros(raw_upd_d.shape[1])
+                    # if algo == "bfs":
+                    #     upd_d[-i-1] = np.copy(raw_upd_d[cutoff_idx-1])
+                    # else:
+                    upd_d[-i-1] = np.zeros(raw_upd_d.shape[1])
             else:
                 # Take only the first n entries where n is the cutoff index                
                 upd_pi = raw_upd_pi[:cutoff_idx]

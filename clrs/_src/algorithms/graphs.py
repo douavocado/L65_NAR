@@ -222,8 +222,7 @@ def bfs(A: _Array, s: int) -> _Out:
           if pi[j] == j and j != s:
             pi[j] = i
             upd_pi[j] = pi[j]
-          # if reach[j] < 1: # only update if we did not reach node last turn
-          upd_d[j] = 1
+            upd_d[j] = 1
           reach[j] = 1
           
     if np.all(reach == prev_reach):

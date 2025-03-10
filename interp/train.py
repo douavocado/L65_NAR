@@ -331,9 +331,12 @@ def main(args):
     
     # Data loading
     if args.sync:
+        print("Using synchronous data")
         data_root = os.path.join("data", alg + "_sync")
     else:
         data_root = os.path.join("data", alg)
+    
+    val_data_root = os.path.join("data", alg) # don't need to evaluate on sync data
     
     if dataset_name == "all":
         train_pth = os.path.join(data_root, "interp_data_all.h5")
@@ -347,7 +350,7 @@ def main(args):
         raise ValueError(f"Dataset {dataset_name} not found")
 
     # Validation always on graphs of size 16
-    val_pth = os.path.join(data_root, "interp_data_16_eval.h5")
+    val_pth = os.path.join(val_data_root, "interp_data_16_eval.h5")
 
     train_dataset = HDF5Dataset(train_pth, nested=joint_training)
     if joint_training:
