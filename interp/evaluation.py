@@ -82,7 +82,7 @@ def evaluate_model(model, dataloader, device, metrics=None):
                 dist_targets = upd_d[t_start:t_end, n_start:n_end]  # (T-1, D)
                 
                 # Convert class logits to predictions
-                class_preds = torch.argmax(class_logits, dim=2)  # (T-1, D)
+                class_preds = torch.argmax(class_logits, dim=1)  # (T-1, D)
                 
                 # Compute loss if needed
                 if 'loss' in metrics:
@@ -227,7 +227,7 @@ def evaluate_joint_model(model, dataloader, device, metrics=None):
     dist_errors_incorrect_pi = {algo: [] for algo in algorithms}
     dist_errors_self_pi = {algo: [] for algo in algorithms}
     dist_errors_nonself_pi = {algo: [] for algo in algorithms}
-    
+    loss_fn = LossFunction()
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating"):
             batch_i = {algo: batch[algo]['all_cumsum'] for algo in algorithms}
@@ -251,7 +251,7 @@ def evaluate_joint_model(model, dataloader, device, metrics=None):
                 # Process each graph for this algorithm
                 for i in range(len(class_out)):
                     # Get predictions and targets for this graph
-                    class_logits = class_out[i]  # (T-1, D, D)
+                    class_logits = class_out[i].permute(0,2,1)  # (T-1, D, D)
                     dist_preds = dist_out[i]  # (T-1, D)
                     
                     # Get corresponding targets
@@ -264,7 +264,7 @@ def evaluate_joint_model(model, dataloader, device, metrics=None):
                     dist_targets = upd_d[algo][t_start:t_end, n_start:n_end]  # (T-1, D)
                     
                     # Convert class logits to predictions
-                    class_preds = torch.argmax(class_logits, dim=2)  # (T-1, D)
+                    class_preds = torch.argmax(class_logits, dim=1)  # (T-1, D)
                     
                     # Compute loss if needed
                     if 'loss' in metrics:

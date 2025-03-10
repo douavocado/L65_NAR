@@ -165,11 +165,16 @@ class Net(hk.Module):
         cur_hint.append(
             probing.DataPoint(
                 name=hint.name, location=loc, type_=typ, data=hint_data))
-
-    hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
-        inputs, cur_hint, mp_state.hiddens,
-        batch_size, nb_nodes, mp_state.lstm_state,
-        spec, encs, decs, repred)
+    if first_step and self.get_inter:
+      encoded_hidden, hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
+          inputs, cur_hint, mp_state.hiddens,
+          batch_size, nb_nodes, mp_state.lstm_state,
+          spec, encs, decs, repred, first_step=True)
+    else:
+      hiddens, output_preds_cand, hint_preds, lstm_state = self._one_step_pred(
+          inputs, cur_hint, mp_state.hiddens,
+          batch_size, nb_nodes, mp_state.lstm_state,
+          spec, encs, decs, repred)
     # print(hiddens.shape)
     if first_step:
       output_preds = output_preds_cand
@@ -194,7 +199,10 @@ class Net(hk.Module):
 
     # Complying to jax.scan, the first returned value is the state we carry over
     # the second value is the output that will be stacked over steps.
-    return new_mp_state, accum_mp_state
+    if first_step and self.get_inter:
+      return encoded_hidden, new_mp_state, accum_mp_state
+    else:
+      return new_mp_state, accum_mp_state
 
   def __call__(self, features_list: List[_Features], repred: bool,
                algorithm_index: int,
@@ -285,13 +293,24 @@ class Net(hk.Module):
           return_all_outputs=return_all_outputs,
           )
       mpstate_hist = [deepcopy(mp_state)]
-      mp_state, lean_mp_state = self._msg_passing_step(
-          mp_state,
-          i=0,
-          first_step=True,
-          **common_args)
+      if self.get_inter:
+        encoded_hidden, mp_state, lean_mp_state = self._msg_passing_step(
+            mp_state,
+            i=0,
+            first_step=True,
+            **common_args)
+      else:
+        hiddens, mp_state, lean_mp_state = self._msg_passing_step(
+            mp_state,
+            i=0,
+            first_step=True,
+            **common_args)
+        encoded_hidden = None
       
-      mpstate_hist.append(deepcopy(mp_state))
+      if encoded_hidden is not None:
+        mpstate_hist = [deepcopy(_MessagePassingScanState(
+          hint_preds=None, output_preds=None,
+          hiddens=encoded_hidden, lstm_state=None))]
       # Then scan through the rest.
       scan_fn = functools.partial(
           self._msg_passing_step,
@@ -338,9 +357,9 @@ class Net(hk.Module):
       hiddens = jnp.stack([v for v in accum_mp_state.hiddens])
       return output_preds, hint_preds, hiddens
     if self.get_inter:
-        return output_preds, hint_preds, mpstate_hist
+      return output_preds, hint_preds, mpstate_hist
     else:
-        return output_preds, hint_preds
+      return output_preds, hint_preds
 
   def _construct_encoders_decoders(self):
     """Constructs encoders and decoders, separate for each algorithm."""
@@ -389,6 +408,7 @@ class Net(hk.Module):
       encs: Dict[str, List[hk.Module]],
       decs: Dict[str, Tuple[hk.Module]],
       repred: bool,
+      first_step: bool = False,
   ):
     """Generates one-step predictions."""
 
@@ -417,7 +437,9 @@ class Net(hk.Module):
           graph_fts = encoders.accum_graph_fts(encoder, dp, graph_fts)
         except Exception as e:
           raise Exception(f'Failed to process {dp}') from e
-
+    
+    if first_step and self.get_inter:
+      encoded_hidden = deepcopy(node_fts)
     # PROCESS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     nxt_hidden = hidden
     for _ in range(self.nb_msg_passing_steps):
@@ -462,7 +484,10 @@ class Net(hk.Module):
         repred=repred,
     )
 
-    return nxt_hidden, output_preds, hint_preds, nxt_lstm_state
+    if first_step and self.get_inter:
+      return encoded_hidden, nxt_hidden, output_preds, hint_preds, nxt_lstm_state
+    else:
+      return nxt_hidden, output_preds, hint_preds, nxt_lstm_state
 
 
 class NetChunked(Net):
