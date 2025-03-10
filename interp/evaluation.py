@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, mean_absolute_error
 
 from interp.dataset import HDF5Dataset, custom_collate, nested_custom_collate
+from interp.metric import LossFunction
 
 
 def evaluate_model(model, dataloader, device, metrics=None):
@@ -49,6 +50,7 @@ def evaluate_model(model, dataloader, device, metrics=None):
     dist_errors_self_pi = []
     dist_errors_nonself_pi = []
     
+    loss_fn = LossFunction()
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating"):
             batch_i = batch['all_cumsum']
@@ -67,7 +69,7 @@ def evaluate_model(model, dataloader, device, metrics=None):
             # Process each graph in the batch
             for i in range(len(class_out)):
                 # Get predictions and targets for this graph
-                class_logits = class_out[i]  # (T-1, D, D)
+                class_logits = class_out[i].permute(0,2,1)  # (T-1, D, D)
                 dist_preds = dist_out[i]  # (T-1, D)
                 
                 # Get corresponding targets
@@ -84,12 +86,8 @@ def evaluate_model(model, dataloader, device, metrics=None):
                 
                 # Compute loss if needed
                 if 'loss' in metrics:
-                    class_loss = F.cross_entropy(
-                        class_logits.permute(0, 2, 1), 
-                        class_targets
-                    )
-                    dist_loss = F.mse_loss(dist_preds, dist_targets)
-                    results['loss'] += (class_loss + dist_loss).item() * class_targets.size(0)
+                    class_loss, dist_loss = loss_fn(dist_preds, dist_targets, class_logits, class_targets)
+                    results['loss'] += (class_loss + dist_loss).item() * class_targets.size(0) * class_targets.size(1)
                 
                 # Collect predictions and targets for overall metrics
                 all_class_preds.append(class_preds.cpu().flatten())
@@ -128,7 +126,7 @@ def evaluate_model(model, dataloader, device, metrics=None):
                     )
                 
                 # Update counters
-                total_samples += class_targets.size(0)  # Number of time steps
+                total_samples += class_targets.size(0) * class_targets.size(1)  # Number of time steps
                 total_nodes += class_targets.numel()  # Total number of node predictions
     
     # Concatenate all predictions and targets
@@ -270,12 +268,8 @@ def evaluate_joint_model(model, dataloader, device, metrics=None):
                     
                     # Compute loss if needed
                     if 'loss' in metrics:
-                        class_loss = F.cross_entropy(
-                            class_logits.permute(0, 2, 1), 
-                            class_targets
-                        )
-                        dist_loss = F.mse_loss(dist_preds, dist_targets)
-                        results[algo]['loss'] += (class_loss + dist_loss).item() * class_targets.size(0)
+                        class_loss, dist_loss = loss_fn(dist_preds, dist_targets, class_logits, class_targets)
+                        results[algo]['loss'] += (class_loss + dist_loss).item() * class_targets.size(0) * class_targets.size(1)
                     
                     # Collect predictions and targets for overall metrics
                     all_class_preds[algo].append(class_preds.cpu().flatten())
@@ -314,7 +308,7 @@ def evaluate_joint_model(model, dataloader, device, metrics=None):
                         )
                     
                     # Update counters
-                    total_samples[algo] += class_targets.size(0)  # Number of time steps
+                    total_samples[algo] += class_targets.size(0) * class_targets.size(1)  # Number of time steps
                     total_nodes[algo] += class_targets.numel()  # Total number of node predictions
     
     # Compute overall metrics for each algorithm
@@ -1047,7 +1041,8 @@ def analyze_examples(model, dataloader, device, num_examples=5, error_only=False
     examples = []
     
     with torch.no_grad():
-        for batch in dataloader:
+        for batch_idx, batch in enumerate(dataloader):
+            batch_size = batch['num_graphs']
             batch_i = batch['all_cumsum']
             time_i = batch['all_cumsum_timesteps']
             batch_info = batch['batch']
@@ -1101,7 +1096,7 @@ def analyze_examples(model, dataloader, device, num_examples=5, error_only=False
                         
                         # Create example
                         example = {
-                            'graph_idx': i,
+                            'graph_idx': batch_idx*batch_size + i,
                             'time_step': t,
                             'node_idx': n,
                             'true_source': class_targets[t, n].item(),
