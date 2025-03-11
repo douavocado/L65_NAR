@@ -364,7 +364,7 @@ def main(args):
         print(f"Loaded pretrained weights from {model_save_path}")
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-    loss_fn = LossFunction(sigma=sigma)
+    loss_fn = LossFunction(sigma_1=sigma)
     # Training loop
     train_losses = []
     val_losses = []

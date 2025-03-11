@@ -151,56 +151,59 @@ def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
                 
                 gt_pi = feedback.outputs[feedback_output_names.index("pi")].data[item] # (D)
 
-                # for upd_d, sometimes we need to get rid of trailing zero entries (for algorithms that don't have fixed numbre of time steps)
-                # detect whether there are trailing zero vectors in the last time dimensions of upd_d and find the cutoff index
+                # for upd_d and upd_pi, sometimes we need to get rid of trailing zero entries (for algorithms that don't have fixed numbre of time steps)
+                # detect whether there are trailing zero vectors in the last time dimensions of upd_d and upd_pi and find the cutoff index
                 # then take the first n entries of upd_pi and upd_d where n is the cutoff index
                 
-                raw_upd_pi = feedback.features.hints[feedback_hint_names.index("upd_pi")].data[:,item,:].astype(np.int32) # (T, D)
+                raw_upd_pi = feedback.features.hints[feedback_hint_names.index("upd_pi")].data[:,item,:].astype(np.int8) # (T, D)
                 raw_upd_d = feedback.features.hints[feedback_hint_names.index("upd_d")].data[:,item,:].astype(np.float32) # (T, D)
                 # Find the cutoff index by detecting trailing zero vectors
                 # A vector is considered zero if all its elements are zero
-                is_zero_vector = np.all(raw_upd_d == np.zeros(raw_upd_d.shape[1]), axis=1)
+                is_zero_vector_upd_d = np.all(np.isclose(raw_upd_d, np.zeros(raw_upd_d.shape[1]), atol=1e-8), axis=1)
+                is_zero_vector_upd_pi = np.all(raw_upd_pi == np.zeros(raw_upd_pi.shape[1]), axis=1)
                 
                 # Find the last non-zero vector index
                 # We include a buffer of trailing zeros if specified, to allow the model to also receive data for what stationary transitions look like.
-                non_zero_indices = np.where(~is_zero_vector)[0]
-                if len(non_zero_indices) > 0:
-                    cutoff_idx = non_zero_indices[-1] + 1  # +1 to include the last non-zero vector
+                non_zero_indices_upd_d = np.where(~is_zero_vector_upd_d)[0]
+                non_zero_indices_upd_pi = np.where(~is_zero_vector_upd_pi)[0]
+                if len(non_zero_indices_upd_d) > 0:
+                    cutoff_idx_upd_d = non_zero_indices_upd_d[-1] + 1  # +1 to include the last non-zero vector
                 else:
-                    cutoff_idx = raw_upd_d.shape[0]  # Use all if no zero vectors found
-                
+                    cutoff_idx_upd_d = raw_upd_d.shape[0]  # Use all if no zero vectors found
+                if len(non_zero_indices_upd_pi) > 0:
+                    cutoff_idx_upd_pi = non_zero_indices_upd_pi[-1] + 1  # +1 to include the last non-zero vector
+                else:
+                    cutoff_idx_upd_pi = raw_upd_pi.shape[0]  # Use all if no zero vectors found
+                cutoff_idx = min(cutoff_idx_upd_d, cutoff_idx_upd_pi)
                 # if cutoff_idx is less than 2, we should make upd_pi and upd_d have length 2, but pad upd_pi with arange(length)
                 # and upd_d with the last vector pad with zeros
                 # similarly if we are using buffer, we should pad upd_pi with arange(length) and upd_d with the last vector of upd_d for the corresponding amount.
                 actual_cutoff_idx = max(2, args.buffer + cutoff_idx)
                 if cutoff_idx < actual_cutoff_idx:
                     if actual_cutoff_idx > raw_upd_d.shape[0]:
-                        # we need to pad upd_pi with arange(length) and upd_d for the corresponding amount.
-                        upd_pi = np.concatenate([raw_upd_pi, np.arange(raw_upd_pi.shape[1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_pi.shape[0], raw_upd_pi.shape[1]))], axis=0)
-                        # if algo == "bfs":
-                        #     upd_d = np.concatenate([raw_upd_d, np.copy(raw_upd_d[cutoff_idx-1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
-                        # else:
-                        upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]))], axis=0)
+                        # we need to pad upd_pi with arange(length) and upd_d with the last vector of upd_d pad with zeros
+                        upd_d = np.concatenate([raw_upd_d, np.zeros((actual_cutoff_idx - raw_upd_d.shape[0], raw_upd_d.shape[1]), dtype=np.float32)], axis=0)
                     else:
-                        upd_pi = raw_upd_pi[:actual_cutoff_idx] 
                         upd_d = raw_upd_d[:actual_cutoff_idx]
+                    if actual_cutoff_idx > raw_upd_pi.shape[0]:
+                        upd_pi = np.concatenate([raw_upd_pi, np.arange(raw_upd_pi.shape[1])[np.newaxis,:] * np.ones((actual_cutoff_idx - raw_upd_pi.shape[0], raw_upd_pi.shape[1]), dtype=np.int8)], axis=0)
+                    else:
+                        upd_pi = raw_upd_pi[:actual_cutoff_idx]
+
+                    # fill intermediate 0s if we have large buffer
                     for i in range(actual_cutoff_idx - cutoff_idx):
                         upd_pi[-i-1] = np.arange(raw_upd_pi.shape[1])
-                        # if algo == "bfs":
-                        #     upd_d[-i-1] = np.copy(raw_upd_d[cutoff_idx-1])
-                        # else:
                         upd_d[-i-1] = np.zeros(raw_upd_d.shape[1])
-                
                 else:
-                    # Take only the first n entries where n is the cutoff index
+                    # Take only the first n entries where n is the cutoff index                
                     upd_pi = raw_upd_pi[:cutoff_idx]
                     upd_d = raw_upd_d[:cutoff_idx]
                 
-                hidden_states = np.stack([hist[i].hiddens[item] for i in range(min(actual_cutoff_idx, len(hist)))]).transpose((0,2,1)) # (T, H, D)
+                hidden_states = np.stack([hist[i].hiddens[item] for i in range(min(actual_cutoff_idx, len(hist)))], dtype=np.float32).transpose((0,2,1)) # (T, H, D)
                 # if we are using buffer or length of hidden states is less than 2, we need to pad last time steps with the last known hidden state
                 # it is important that we do not cutoff at cutoff_idx, as this gives the model information about how many steps the algorithm takes.
                 if actual_cutoff_idx > hidden_states.shape[0]:
-                    hidden_states = np.concatenate([hidden_states, np.copy(hidden_states[-1])[np.newaxis,:,:] * np.ones((actual_cutoff_idx - hidden_states.shape[0], hidden_states.shape[1], hidden_states.shape[2]))], axis=0)
+                    hidden_states = np.concatenate([hidden_states, np.copy(hidden_states[-1])[np.newaxis,:,:] * np.ones((actual_cutoff_idx - hidden_states.shape[0], hidden_states.shape[1], hidden_states.shape[2]), dtype=np.float32)], axis=0)
                 
                 datapoint = {
                     'hidden_states': deepcopy(hidden_states),
@@ -274,8 +277,8 @@ def create_individual_dataset(lengths, algo, num_samples_per_length, args):
             raw_upd_d = feedback.features.hints[feedback_hint_names.index("upd_d")].data[:,item,:].astype(np.float32) # (T, D)
             # Find the cutoff index by detecting trailing zero vectors
             # A vector is considered zero if all its elements are zero
-            is_zero_vector_upd_d = np.all(raw_upd_d == np.zeros(raw_upd_d.shape[1]), axis=1)
-            is_zero_vector_upd_pi = np.all(np.isclose(raw_upd_pi, np.zeros(raw_upd_pi.shape[1]), atol=1e-8), axis=1)
+            is_zero_vector_upd_d = np.all(np.isclose(raw_upd_d, np.zeros(raw_upd_d.shape[1]), atol=1e-8), axis=1)
+            is_zero_vector_upd_pi = np.all(raw_upd_pi == np.zeros(raw_upd_pi.shape[1]), axis=1)
             
             # Find the last non-zero vector index
             # We include a buffer of trailing zeros if specified, to allow the model to also receive data for what stationary transitions look like.
