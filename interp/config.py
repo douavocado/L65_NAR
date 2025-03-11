@@ -63,6 +63,7 @@ def create_model_from_config(config: Dict[str, Any]):
     
     model_type = config.get('model_type', 'mlp_diff')
     model_config = config.get('model', {})
+    training_config = config.get('training', {})
     
     if model_type == 'mlp_diff':
         return InterpNetwork(
@@ -94,7 +95,7 @@ def create_model_from_config(config: Dict[str, Any]):
             dropout=model_config.get('dropout', 0.1),
             msg_dim=model_config.get('msg_dim', 128),
             proj_dim=model_config.get('proj_dim', 128),
-            algorithms=model_config.get('algorithms', ["bellman_ford", "bfs"])
+            algorithms=training_config.get('algorithms', ["bellman_ford", "bfs"])
         )
     else:
         raise ValueError(f"Unknown model type: {model_type}") 

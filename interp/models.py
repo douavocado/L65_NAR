@@ -433,9 +433,9 @@ class GNNInterpNetwork(nn.Module):
 class GNNLayer(nn.Module):
     """Graph Neural Network layer implementing message passing"""
     
-    def __init__(self, node_dim, edge_dim, msg_out_dim):
+    def __init__(self, node_dim, edge_dim, msg_out_dim, self_connection: bool = True):
         super().__init__()
-        
+        self.self_connection = self_connection
         # Message function (combines source node and edge features)
         self.message_fn = nn.Sequential(
             nn.Linear(node_dim + edge_dim, msg_out_dim),
@@ -479,6 +479,9 @@ class GNNLayer(nn.Module):
         messages = self.message_fn(message_inputs)  # (N, N, out_dim)
         
         # Create mask from adjacency matrix to zero out non-connected edges
+        if self.self_connection:
+            # include self-connections to adjacency matrix
+            adj_matrix = adj_matrix + torch.eye(num_nodes, device=adj_matrix.device)
         mask = (adj_matrix > 0).unsqueeze(-1).to(node_features.dtype)  # (N, N, 1)
         masked_messages = messages * mask
         

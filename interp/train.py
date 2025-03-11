@@ -295,7 +295,7 @@ def main(args):
         print(f"Overriding model name from {model_name} to {args.model_name}")
         model_name = args.model_name
         
-    if alg in ["bellman_ford_bfs", "bellman_ford_dijkstra", "bellman_ford_prims"]:
+    if alg in ["bellman_ford_bfs", "bellman_ford_dijkstra", "bellman_ford_mst_prim", "dijkstra_bfs", "mst_prim_bfs"]:
         joint_training = True
         scheduler = training_config.get('scheduler', {"type": "joint"})
         algorithms = training_config.get('algorithms', ["bellman_ford", "bfs"])
@@ -343,6 +343,7 @@ def main(args):
     # Validation always on graphs of size 16
     val_pth = os.path.join(val_data_root, "interp_data_16_eval.h5")
 
+    print("loading train dataset from ", train_pth)
     train_dataset = HDF5Dataset(train_pth, nested=joint_training)
     if joint_training:
         train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=nested_custom_collate)
@@ -487,7 +488,7 @@ if __name__ == "__main__":
     parser.add_argument("--dataset", type=str, choices=["all", "16", "8", "OOD"], help="Dataset to use (overrides config)")
     parser.add_argument("--model_name", type=str, help="Model name for saving (defaults to model_type)")
     parser.add_argument("-r", "--resume", action='store_true', help="Resume from previously trained weights")
-    parser.add_argument("--algo", type=str, choices=["bellman_ford", "dijkstra", "mst_prim", "bellman_ford_bfs", "bfs"], help="Algorithm to train on (overrides config)")
+    parser.add_argument("--algo", type=str, choices=["bellman_ford", "dijkstra", "mst_prim", "bellman_ford_bfs", "bfs", "dijkstra_bfs"], help="Algorithm to train on (overrides config)")
     parser.add_argument("--device", type=str, choices=["cpu", "cuda"], help="Device to use.")
     parser.add_argument("--sync", action='store_true', help="Use synchronous datasets.")
     parser.add_argument("--sigma", type=float, help="Sigma for the distance loss.")

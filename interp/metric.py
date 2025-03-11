@@ -14,6 +14,7 @@ class LossFunction:
     def loss(self, dist_ins, dist_target, class_ins, class_target):
         # only sum the mse loss over the entries where class_target does not point to itself
         mask = class_target != torch.arange(class_target.size(1), device=class_target.device)
+        #mask = torch.ones_like(dist_ins, dtype=torch.bool)
         if mask.sum() == 0: # deal with the case where there are no non-self edges, to not produce nan result 
             dist_loss = torch.tensor(0.0, device=dist_ins.device)
         else:
