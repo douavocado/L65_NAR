@@ -125,9 +125,9 @@ For a complete list of options:
 
 For visualisation and detailed analysis, use the `train.ipynb` notebook which provides interactive visualizations of model predictions compared to ground truth.
 
-    ![Summary stats image](interp/examples/img1.png)
+![Summary stats image](./interp/examples/img1.png)
 
-    ![Example graph visualisation](interp/examples/img2.png)
+![Example graph visualisation](./interp/examples/img2.png)
 
 
 
