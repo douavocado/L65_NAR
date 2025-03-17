@@ -152,17 +152,9 @@ class InterpNetwork(nn.Module):
             nn.ReLU(),
         )
         
-        # Process edge weights
-        self.edge_encoder = nn.Sequential(
-            nn.Linear(1, proj_dim // 4),
-            nn.ReLU(),
-            nn.Linear(proj_dim // 4, proj_dim // 4),
-            nn.ReLU(),
-        )
-        
         # Update mechanism: determine if node j updated node i
         self.update_detector = nn.Sequential(
-            nn.Linear(2 * proj_dim + proj_dim // 4, proj_dim),
+            nn.Linear(2 * proj_dim, proj_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(proj_dim, proj_dim // 2),
@@ -224,9 +216,8 @@ class InterpNetwork(nn.Module):
             graph_mask = (batch == g)
             D = graph_mask.sum()  # Number of nodes in this graph
             
-            # Extract this graph's node states and edge weights
+            # Extract this graph's node states
             x_graph = x[time_i[g]:time_i[g+1], :, graph_mask]  # (T, H, D)
-            edge_w_graph = edge_w[start_idx:start_idx+D, start_idx:start_idx+D]  # (D, D)
             
             # Extract adjacent time steps
             x_curr = x_graph[:-1]  # (T-1, H, D)
@@ -243,11 +234,6 @@ class InterpNetwork(nn.Module):
             x_next_flat = x_next.reshape((T-1) * D, H)
             x_next_enc = self.node_encoder(x_next_flat).reshape(T-1, D, -1)
             
-            # Encode edge weights
-            edge_w_expanded = edge_w_graph.unsqueeze(0).unsqueeze(-1)  # (1, D, D, 1)
-            edge_enc = self.edge_encoder(edge_w_expanded)  # (1, D, D, proj_dim//4)
-            edge_enc = edge_enc.expand(T-1, -1, -1, -1)  # (T-1, D, D, proj_dim//4)
-            
             # For each target node i at time t+1, consider all possible source nodes j at time t
             x_next_i = x_next_enc.unsqueeze(2)  # (T-1, D, 1, proj_dim)
             x_next_i = x_next_i.expand(-1, -1, D, -1)  # (T-1, D, D, proj_dim)
@@ -255,20 +241,14 @@ class InterpNetwork(nn.Module):
             x_curr_j = x_curr_enc.unsqueeze(1)  # (T-1, 1, D, proj_dim)
             x_curr_j = x_curr_j.expand(-1, D, -1, -1)  # (T-1, D, D, proj_dim)
             
-            # Concatenate features for update detection
-            update_features = torch.cat([x_next_i, x_curr_j, edge_enc], dim=-1)
+            # Concatenate features for update detection (without edge info)
+            update_features = torch.cat([x_next_i, x_curr_j], dim=-1)
             
             # Predict update sources for each node
             class_logits = self.update_detector(update_features).squeeze(-1)  # (T-1, D, D)
             
-            # Create a mask for non-existent edges (except self-loops)
-            edge_mask = (edge_w_graph == 0).unsqueeze(0).expand(T-1, -1, -1)  # (T-1, D, D)
-            diag_mask = torch.eye(D, device=edge_w.device).bool()
-            diag_mask = diag_mask.unsqueeze(0).expand(T-1, -1, -1)  # (T-1, D, D)
-            
-            # Apply the mask: set logits to -inf where there's no edge and it's not a self-loop
-            mask = edge_mask & ~diag_mask
-            class_logits = class_logits.masked_fill(mask, -1e9)
+            # Include self-loops in the connectivity
+            mask = torch.zeros((T-1, D, D), device=x.device, dtype=torch.bool)
             
             # Predict distance updates
             state_diff_features = torch.cat([x_curr_enc, x_next_enc], dim=-1)  # (T-1, D, 2*proj_dim)

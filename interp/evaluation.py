@@ -382,13 +382,15 @@ def evaluate_joint_model(model, dataloader, device, metrics=None):
     return results
 
 
-def visualize_results(results, title="Model Evaluation Results"):
+def visualize_results(metrics, title="Model Evaluation Results", show_plots=False, save_path=None):
     """
     Visualize evaluation results with enhanced aesthetics.
     
     Args:
-        results: Dictionary of metric values
+        metrics: Dictionary of metric values
         title: Title for the plot
+        show_plots: Whether to display the plots (default: False)
+        save_path: Path to save the visualization (default: None)
     """
     # Set a modern style
     plt.style.use('seaborn-v0_8-pastel')
@@ -396,17 +398,20 @@ def visualize_results(results, title="Model Evaluation Results"):
     # Define a nice color palette
     colors = plt.cm.viridis(np.linspace(0.2, 0.8, 10))
     
-    if isinstance(next(iter(results.values())), dict):
+    # Keep track of all figures created
+    all_figures = []
+    
+    if isinstance(next(iter(metrics.values())), dict):
         # Joint model results
-        algorithms = [algo for algo in results.keys() if algo != 'aggregate']
-        metrics = list(results[algorithms[0]].keys())
+        algorithms = [algo for algo in metrics.keys() if algo != 'aggregate']
+        metrics_list = list(metrics[algorithms[0]].keys())
         
         # Group metrics by type for better organization
         metric_groups = {
-            'Classification Metrics': [m for m in metrics if 'class' in m],
-            'Distance Metrics': [m for m in metrics if 'dist' in m and not any(x in m for x in ['correct', 'incorrect', 'self', 'nonself'])],
-            'Custom Metrics': [m for m in metrics if any(x in m for x in ['correct', 'incorrect', 'self', 'nonself'])],
-            'Other': [m for m in metrics if not any(x in m for x in ['class', 'dist'])]
+            'Classification Metrics': [m for m in metrics_list if 'class' in m],
+            'Distance Metrics': [m for m in metrics_list if 'dist' in m and not any(x in m for x in ['correct', 'incorrect', 'self', 'nonself'])],
+            'Custom Metrics': [m for m in metrics_list if any(x in m for x in ['correct', 'incorrect', 'self', 'nonself'])],
+            'Other': [m for m in metrics_list if not any(x in m for x in ['class', 'dist'])]
         }
         
         # Remove empty groups
@@ -417,11 +422,10 @@ def visualize_results(results, title="Model Evaluation Results"):
                 continue
                 
             fig, axes = plt.subplots(len(group_metrics), 1, figsize=(12, 4 * len(group_metrics)))
-            if len(group_metrics) == 1:
-                axes = [axes]
+            all_figures.append(fig)  # Add figure to our list
             
             for i, metric in enumerate(group_metrics):
-                values = [results[algo][metric] for algo in algorithms]
+                values = [metrics[algo][metric] for algo in algorithms]
                 
                 # Skip metrics with all NaN values
                 if all(np.isnan(v) for v in values):
@@ -466,29 +470,40 @@ def visualize_results(results, title="Model Evaluation Results"):
             plt.tight_layout()
             plt.suptitle(f"{title} - {group_name}", fontsize=16, y=1.02)
             plt.subplots_adjust(top=0.9)
-            plt.show()
+            
+            # Save if path provided
+            if save_path:
+                group_save_path = save_path.replace('.png', f'_{group_name.replace(" ", "_")}.png')
+                fig.savefig(group_save_path)
+                
+            if show_plots:
+                plt.show()
+            else:
+                if not save_path:  # Only close if not saving
+                    plt.close(fig)
         
     else:
         # Single model results
-        metrics = list(results.keys())
-        values = list(results.values())
+        metrics_list = list(metrics.keys())
+        values = list(metrics.values())
         
         # Group metrics by type
         metric_groups = {
-            'Classification Metrics': [i for i, m in enumerate(metrics) if 'class' in m],
-            'Distance Metrics': [i for i, m in enumerate(metrics) if 'dist' in m and not any(x in m for x in ['correct', 'incorrect', 'self', 'nonself'])],
-            'Custom Metrics': [i for i, m in enumerate(metrics) if any(x in m for x in ['correct', 'incorrect', 'self', 'nonself'])],
-            'Other': [i for i, m in enumerate(metrics) if not any(x in m for x in ['class', 'dist'])]
+            'Classification Metrics': [i for i, m in enumerate(metrics_list) if 'class' in m],
+            'Distance Metrics': [i for i, m in enumerate(metrics_list) if 'dist' in m and not any(x in m for x in ['correct', 'incorrect', 'self', 'nonself'])],
+            'Custom Metrics': [i for i, m in enumerate(metrics_list) if any(x in m for x in ['correct', 'incorrect', 'self', 'nonself'])],
+            'Other': [i for i, m in enumerate(metrics_list) if not any(x in m for x in ['class', 'dist'])]
         }
         
         # Remove empty groups
         metric_groups = {k: v for k, v in metric_groups.items() if v}
         
         for group_name, indices in metric_groups.items():
-            group_metrics = [metrics[i] for i in indices]
+            group_metrics = [metrics_list[i] for i in indices]
             group_values = [values[i] for i in indices]
             
-            plt.figure(figsize=(12, 6))
+            fig = plt.figure(figsize=(12, 6))
+            all_figures.append(fig)  # Add figure to our list
             
             # Skip metrics with all NaN values
             valid_indices = [i for i, v in enumerate(group_values) if not np.isnan(v)]
@@ -498,8 +513,12 @@ def visualize_results(results, title="Model Evaluation Results"):
                 plt.title(f"{group_name}")
                 plt.xticks([])
                 plt.yticks([])
-                plt.show()
-                continue
+                if show_plots:
+                    plt.show()
+                else:
+                    if not save_path:  # Only close if not saving
+                        plt.close(fig)
+                    continue
             
             # Filter out NaN values
             filtered_metrics = [group_metrics[i] for i in valid_indices]
@@ -535,7 +554,19 @@ def visualize_results(results, title="Model Evaluation Results"):
             if any('accuracy' in m or 'precision' in m or 'recall' in m or 'f1' in m for m in filtered_metrics):
                 plt.axhline(y=1.0, color='r', linestyle='--', alpha=0.3)
             
-            plt.show()
+            # Save if path provided
+            if save_path:
+                group_save_path = save_path.replace('.png', f'_{group_name.replace(" ", "_")}.png')
+                fig.savefig(group_save_path)
+            
+            if show_plots:
+                plt.show()
+            else:
+                if not save_path:  # Only close if not saving
+                    plt.close(fig)
+    
+    # Return the list of figures for further use if needed
+    return all_figures
 
 
 def evaluate_model_on_dataset(model, dataset_path, batch_size=16, device=None, nested=False, metrics=None):
@@ -1325,6 +1356,7 @@ def visualize_examples_summary(examples):
     
     # 3. Distance error by correctness
     ax3 = plt.subplot2grid((2, 2), (1, 0))
+    
     correct_errors = [err for err, corr in zip(dist_errors, correct) if corr]
     incorrect_errors = [err for err, corr in zip(dist_errors, correct) if not corr]
     
