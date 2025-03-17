@@ -1,0 +1,45 @@
+Model Directory: interp_checkpoints/bellman_ford/gnn_small_all/
+Config File: interp_checkpoints/bellman_ford/gnn_small_all/gnn_small_all_config.json
+Checkpoint File: interp_checkpoints/bellman_ford/gnn_small_all/gnn_small_all.pth
+Model Type: gnn
+Model Architecture: GNNInterpNetwork(
+  (node_encoder): Sequential(
+    (0): Linear(in_features=128, out_features=16, bias=True)
+    (1): ReLU()
+    (2): Dropout(p=0.1, inplace=False)
+  )
+  (edge_encoder): Sequential(
+    (0): Linear(in_features=1, out_features=16, bias=True)
+    (1): ReLU()
+  )
+  (gnn_layers): ModuleList(
+    (0): GNNLayer(
+      (message_fn): Sequential(
+        (0): Linear(in_features=32, out_features=8, bias=True)
+        (1): ReLU()
+      )
+      (update_fn): Sequential(
+        (0): Linear(in_features=24, out_features=16, bias=True)
+        (1): ReLU()
+      )
+      (gate): Sequential(
+        (0): Linear(in_features=24, out_features=16, bias=True)
+        (1): Sigmoid()
+      )
+    )
+  )
+  (update_classifier): Sequential(
+    (0): Linear(in_features=48, out_features=16, bias=True)
+    (1): ReLU()
+    (2): Dropout(p=0.1, inplace=False)
+    (3): Linear(in_features=16, out_features=1, bias=True)
+  )
+  (dist_predictor): Sequential(
+    (0): Linear(in_features=32, out_features=16, bias=True)
+    (1): ReLU()
+    (2): Dropout(p=0.1, inplace=False)
+    (3): Linear(in_features=16, out_features=1, bias=True)
+  )
+)
+Evaluation Algorithm: bellman_ford (inferred from config)
+OOD Dataset: ./data/bellman_ford/interp_data_OOD_eval.h5
