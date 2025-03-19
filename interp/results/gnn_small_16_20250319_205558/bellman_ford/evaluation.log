@@ -1,0 +1,18 @@
+2025-03-19 20:55:58,826 - model_evaluation - INFO - Starting evaluation of model from directory: interp_checkpoints/interp_checkpoints/bellman_ford/graph_size_experiment/gnn_small_16/
+2025-03-19 20:55:58,826 - model_evaluation - INFO - Using config file: interp_checkpoints/interp_checkpoints/bellman_ford/graph_size_experiment/gnn_small_16\gnn_small_16_config.json
+2025-03-19 20:55:58,828 - model_evaluation - INFO - Using checkpoint file: interp_checkpoints/interp_checkpoints/bellman_ford/graph_size_experiment/gnn_small_16\gnn_small_16.pth
+2025-03-19 20:55:58,833 - model_evaluation - INFO - Algorithm: bellman_ford
+2025-03-19 20:55:58,989 - model_evaluation - INFO - Device: cpu
+2025-03-19 20:55:58,993 - model_evaluation - INFO - Batch size: 32
+2025-03-19 20:55:58,993 - model_evaluation - INFO - Algorithm was inferred from config: bellman_ford
+2025-03-19 20:55:58,997 - model_evaluation - INFO - Inferred OOD dataset path: ./data\bellman_ford\interp_data_OOD_eval.h5
+2025-03-19 20:55:58,997 - model_evaluation - INFO - Creating model from configuration...
+2025-03-19 20:55:59,047 - model_evaluation - INFO - Confirmed model is a single algorithm model
+2025-03-19 20:55:59,051 - model_evaluation - INFO - Model metadata:
+2025-03-19 20:55:59,051 - model_evaluation - INFO -   Model Type: gnn
+2025-03-19 20:55:59,051 - model_evaluation - INFO -   Learning rate: 0.0005
+2025-03-19 20:55:59,068 - model_evaluation - ERROR - Failed to load model weights: Error(s) in loading state_dict for GNNInterpNetwork:
+	size mismatch for edge_encoder.0.weight: copying a param with shape torch.Size([8, 1]) from checkpoint, the shape in current model is torch.Size([16, 1]).
+	size mismatch for edge_encoder.0.bias: copying a param with shape torch.Size([8]) from checkpoint, the shape in current model is torch.Size([16]).
+	size mismatch for gnn_layers.0.message_fn.0.weight: copying a param with shape torch.Size([16, 40]) from checkpoint, the shape in current model is torch.Size([16, 48]).
+	size mismatch for update_classifier.0.weight: copying a param with shape torch.Size([32, 72]) from checkpoint, the shape in current model is torch.Size([32, 80]).

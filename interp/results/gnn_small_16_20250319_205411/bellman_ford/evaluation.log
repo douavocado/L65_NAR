@@ -1,0 +1,9 @@
+2025-03-19 20:54:11,484 - model_evaluation - INFO - Starting evaluation of model from directory: interp_checkpoints/interp_checkpoints/bellman_ford/graph_size_experiment/gnn_small_16/
+2025-03-19 20:54:11,484 - model_evaluation - INFO - Using config file: interp_checkpoints/interp_checkpoints/bellman_ford/graph_size_experiment/gnn_small_16\gnn_small_16_config.json
+2025-03-19 20:54:11,489 - model_evaluation - INFO - Using checkpoint file: interp_checkpoints/interp_checkpoints/bellman_ford/graph_size_experiment/gnn_small_16\gnn_small_16.pth
+2025-03-19 20:54:11,492 - model_evaluation - INFO - Algorithm: bellman_ford
+2025-03-19 20:54:11,493 - model_evaluation - INFO - Device: cpu
+2025-03-19 20:54:11,497 - model_evaluation - INFO - Batch size: 32
+2025-03-19 20:54:11,501 - model_evaluation - INFO - Algorithm was inferred from config: bellman_ford
+2025-03-19 20:54:11,505 - model_evaluation - INFO - Inferred OOD dataset path: ./data\bellman_ford\interp_data_OOD_eval.h5
+2025-03-19 20:54:11,505 - model_evaluation - INFO - Creating model from configuration...
