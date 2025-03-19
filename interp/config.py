@@ -59,7 +59,7 @@ def create_model_from_config(config: Dict[str, Any]):
     Returns:
         Model instance
     """
-    from interp.models import InterpNetwork, GNNInterpNetwork, GNNJointInterpNetwork
+    from models import InterpNetwork, GNNInterpNetwork, GNNJointInterpNetwork
     
     model_type = config.get('model_type', 'mlp_diff')
     model_config = config.get('model', {})

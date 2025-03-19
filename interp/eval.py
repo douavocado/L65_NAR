@@ -11,9 +11,9 @@ import shutil
 import logging
 import glob
 
-from interp.config import load_config, create_model_from_config
-from interp.evaluation import evaluate_model, evaluate_model_on_dataset, visualize_results
-from interp.metric import LossFunction
+from config import load_config, create_model_from_config
+from evaluation import evaluate_model, evaluate_model_on_dataset, visualize_results
+from metric import LossFunction
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate a trained model on OOD datasets")

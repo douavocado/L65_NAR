@@ -13,9 +13,9 @@ import numpy as np
 from tqdm import tqdm
 import math
 
-from interp.dataset import HDF5Dataset, custom_collate, nested_custom_collate
-from interp.config import load_config, create_model_from_config
-from interp.metric import LossFunction
+from dataset import HDF5Dataset, custom_collate, nested_custom_collate
+from config import load_config, create_model_from_config
+from metric import LossFunction
 import argparse
 
 def one_hot_encode(upd_pi):
