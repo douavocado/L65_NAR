@@ -9,8 +9,8 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, mean_absolute_error
 
-from dataset import HDF5Dataset, custom_collate, nested_custom_collate
-from metric import LossFunction
+from interp.dataset import HDF5Dataset, custom_collate, nested_custom_collate
+from interp.metric import LossFunction
 
 
 def evaluate_model(model, dataloader, device, metrics=None):
