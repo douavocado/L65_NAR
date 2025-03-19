@@ -69,7 +69,7 @@ def create_model_from_config(config: Dict[str, Any]):
         return InterpNetwork(
             hidden_dim=model_config.get('hidden_dim', 128),
             proj_dim=model_config.get('proj_dim',128),
-            dropout=model_config.get('dropout', 0.1),
+            dropout=model_config.get('dropout', 0.1)
         )
     elif model_type == 'gnn':
         return GNNInterpNetwork(
@@ -77,7 +77,8 @@ def create_model_from_config(config: Dict[str, Any]):
             gnn_layers=model_config.get('gnn_layers', 1),
             dropout=model_config.get('dropout', 0.1),
             msg_dim=model_config.get('msg_dim', 128),
-            proj_dim=model_config.get('proj_dim', 128)
+            proj_dim=model_config.get('proj_dim', 128),
+            edge_dim=model_config.get('edge_dim', 128)
         )
     elif model_type == 'transformer':
         return TransformerInterpNetwork(
@@ -95,6 +96,7 @@ def create_model_from_config(config: Dict[str, Any]):
             dropout=model_config.get('dropout', 0.1),
             msg_dim=model_config.get('msg_dim', 128),
             proj_dim=model_config.get('proj_dim', 128),
+            edge_dim=model_config.get('edge_dim', 128),
             algorithms=training_config.get('algorithms', ["bellman_ford", "bfs"])
         )
     else:
