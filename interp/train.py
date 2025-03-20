@@ -273,8 +273,8 @@ def main(args):
 
 
     for params in param_grid:
-        config.update(params)
-        fname_ext = f"_proj{config['proj_dim']}_edge{config['edge_dim']}_msg{config['edge_dim']}" if args.tune else ""
+        config["model"].update(params)
+        fname_ext = f"_gnnl{config['model']['gnn_layers']}_proj{config['model']['proj_dim']}_edge{config['model']['edge_dim']}_msg{config['model']['msg_dim']}" if args.tune else ""
     
         # Extract training parameters from config
         training_config = config.get('training', {})
@@ -321,6 +321,11 @@ def main(args):
             joint_training = False
             print("Performing single algorithm training on the following algorithm: ", alg)
 
+        
+        if args.tune:
+            print(f"Using parameters: gnn_layers {config['model']['gnn_layers']}, proj_dim {config['model']['proj_dim']}, edge_dim {config['model']['edge_dim']}, msg_dim {config['model']['msg_dim']}")
+            
+
         if args.device == "cuda":
             if torch.cuda.is_available():
                 device = torch.device("cuda")
@@ -329,6 +334,7 @@ def main(args):
         else:
             device = torch.device("cpu")
         print(f"Using device: {device}")
+
         
         # Model name and paths
         checkpoint_dir = os.path.join("interp_checkpoints", alg, f"{model_name}_{dataset_name}")
