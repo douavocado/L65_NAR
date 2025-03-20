@@ -337,7 +337,7 @@ def main(args):
 
         
         # Model name and paths
-        checkpoint_dir = os.path.join("interp_checkpoints", alg, f"{model_name}_{dataset_name}")
+        checkpoint_dir = os.path.join("interp_checkpoints", alg, f"{model_name}_{dataset_name}{fname_ext}")
         os.makedirs(checkpoint_dir, exist_ok=True)
         model_save_path = os.path.join(checkpoint_dir, f"{model_name}_{dataset_name}{fname_ext}.pth")
         config_save_path = os.path.join(checkpoint_dir, f"{model_name}_{dataset_name}{fname_ext}_config.json")
