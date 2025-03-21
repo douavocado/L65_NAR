@@ -285,7 +285,24 @@ def main(args):
         dataset_name = training_config.get('dataset', 'all')
         alg = training_config.get('algo', 'bellman_ford')
         model_name = training_config.get('model_name', 'mlp_diff')
-        sigma = float(training_config.get('sigma', math.sqrt(1/2)))
+        sigma_1 = float(training_config.get('sigma_1', math.sqrt(1/2)))
+        sigma_2 = training_config.get('sigma_2', None)
+        if sigma_2 is not None:
+            sigma_2 = float(sigma_2)
+
+        if args.sigma_1 is not None:
+            print(f"Overriding sigma_1 from {sigma_1} to {args.sigma_1}")
+            sigma_1 = args.sigma_1
+        if args.sigma_2 is not None:
+            print(f"Overriding sigma_2 from {sigma_2} to {args.sigma_2}")
+            sigma_2 = args.sigma_2
+
+        # for bfs, mst_prim we do not train on distance loss. In which case sigma_1 and sigma_2 are both None
+        if alg in ["bfs", "mst_prim_bfs"]:
+            sigma_1 = None
+            sigma_2 = None
+            print("Not training on distance loss for bfs and mst_prim_bfs, setting sigma_1 and sigma_2 to None")
+
         # Override with command line arguments if provided
         if args.learning_rate is not None:
             print(f"Overriding learning rate from {learning_rate} to {args.learning_rate}")
@@ -387,7 +404,7 @@ def main(args):
             print(f"Loaded pretrained weights from {model_save_path}")
 
         optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-        loss_fn = LossFunction(sigma_1=sigma)
+        loss_fn = LossFunction(sigma_1=sigma_1, sigma_2=sigma_2)
         # Training loop
         train_losses = []
         val_losses = []
@@ -466,6 +483,8 @@ def main(args):
                     updated_config['training']['dataset'] = dataset_name
                     updated_config['training']['algo'] = alg
                     updated_config['training']['model_name'] = model_name
+                    updated_config['training']['sigma_1'] = sigma_1
+                    updated_config['training']['sigma_2'] = sigma_2
                     json.dump(updated_config, f, indent=4)
                 print(f"Saved best model to {model_save_path} and config to {config_save_path}")
                 counter = 0  # Reset patience counter
@@ -514,7 +533,8 @@ if __name__ == "__main__":
     parser.add_argument("--algo", type=str, choices=["bellman_ford", "dijkstra", "mst_prim", "bellman_ford_bfs", "bfs", "dijkstra_bfs"], help="Algorithm to train on (overrides config)")
     parser.add_argument("--device", type=str, choices=["cpu", "cuda"], help="Device to use.")
     parser.add_argument("--sync", action='store_true', help="Use synchronous datasets.")
-    parser.add_argument("--sigma", type=float, help="Sigma for the distance loss.")
+    parser.add_argument("--sigma_1", type=float, help="Sigma_1 for the distance loss.")
+    parser.add_argument("--sigma_2", type=float, help="Sigma_2 for the distance loss.")
     parser.add_argument("--tune", action="store_true", help="Whether to hyperparameter tune the model.")
     args = parser.parse_args()
     main(args)

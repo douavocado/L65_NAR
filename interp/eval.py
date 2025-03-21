@@ -12,8 +12,7 @@ import logging
 import glob
 
 from interp.config import load_config, create_model_from_config
-from interp.evaluation import evaluate_model, evaluate_model_on_dataset, visualize_results
-from interp.metric import LossFunction
+from interp.evaluation import evaluate_model_on_dataset, visualize_results
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate a trained model on OOD datasets")
@@ -269,7 +268,9 @@ def main():
         else:
             print("Could not infer algorithm from config. Please specify using --algorithm.")
             return
-    
+    else:
+        inferred_algorithm = None
+        print(f"Using specified algorithm from args: {args.algorithm}")
     # Create model-specific results directory
     results_dir = create_results_dir(args.model_dir)
     print(f"Results will be saved to: {results_dir}")
@@ -294,9 +295,10 @@ def main():
     logger.info(f"Device: {args.device}")
     logger.info(f"Batch size: {args.batch_size}")
     
-    # Log algorithm inference if it was inferred
-    if args.algorithm == inferred_algorithm:
-        logger.info(f"Algorithm was inferred from config: {args.algorithm}")
+    if inferred_algorithm is not None:
+        logger.info(f"Algorithm was inferred from config: {inferred_algorithm}")
+    else:
+        logger.info(f"Using specified algorithm from args: {args.algorithm}")
     
     # Infer OOD dataset if not specified
     if args.ood_dataset is None:
@@ -373,6 +375,13 @@ def main():
     logger.info(f"Evaluating model on {args.algorithm} OOD dataset...")
     
     # Use evaluate_model_on_dataset from evaluation.py
+    # need to get sigma_1 and sigma_2 from config
+    sigma_1 = config.get('training', {}).get('sigma_1', None)
+    if sigma_1 is not None:
+        sigma_1 = float(sigma_1)
+    sigma_2 = config.get('training', {}).get('sigma_2', None)
+    if sigma_2 is not None:
+        sigma_2 = float(sigma_2)
     try:
         metrics = evaluate_model_on_dataset(
             model=model,
@@ -380,6 +389,8 @@ def main():
             batch_size=args.batch_size,
             device=args.device,
             nested=False,
+            sigma_1=sigma_1,
+            sigma_2=sigma_2,
             metrics=args.metrics
         )
         logger.info("Evaluation completed successfully")

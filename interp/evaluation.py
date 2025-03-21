@@ -13,7 +13,7 @@ from interp.dataset import HDF5Dataset, custom_collate, nested_custom_collate
 from interp.metric import LossFunction
 
 
-def evaluate_model(model, dataloader, device, metrics=None):
+def evaluate_model(model, dataloader, device, sigma_1, sigma_2=None, metrics=None):
     """
     Evaluate a model on a dataset with multiple metrics.
     
@@ -50,7 +50,8 @@ def evaluate_model(model, dataloader, device, metrics=None):
     dist_errors_self_pi = []
     dist_errors_nonself_pi = []
     
-    loss_fn = LossFunction()
+    # depending on the algorithm, we may not train on distance loss
+    loss_fn = LossFunction(sigma_1=sigma_1, sigma_2=sigma_2)
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating"):
             batch_i = batch['all_cumsum']
@@ -188,7 +189,7 @@ def evaluate_model(model, dataloader, device, metrics=None):
     return results
 
 
-def evaluate_joint_model(model, dataloader, device, metrics=None):
+def evaluate_joint_model(model, dataloader, device, sigma_1, sigma_2=None, metrics=None):
     """
     Evaluate a joint model on a dataset with multiple metrics.
     
@@ -227,7 +228,7 @@ def evaluate_joint_model(model, dataloader, device, metrics=None):
     dist_errors_incorrect_pi = {algo: [] for algo in algorithms}
     dist_errors_self_pi = {algo: [] for algo in algorithms}
     dist_errors_nonself_pi = {algo: [] for algo in algorithms}
-    loss_fn = LossFunction()
+    loss_fn = LossFunction(sigma_1=sigma_1, sigma_2=sigma_2)
     with torch.no_grad():
         for batch in tqdm(dataloader, desc="Evaluating"):
             batch_i = {algo: batch[algo]['all_cumsum'] for algo in algorithms}
@@ -569,7 +570,7 @@ def visualize_results(metrics, title="Model Evaluation Results", show_plots=Fals
     return all_figures
 
 
-def evaluate_model_on_dataset(model, dataset_path, batch_size=16, device=None, nested=False, metrics=None):
+def evaluate_model_on_dataset(model, dataset_path, batch_size=16, device=None, nested=False, sigma_1=None, sigma_2=None, metrics=None):
     """
     Evaluate a model on a dataset.
     
@@ -611,9 +612,9 @@ def evaluate_model_on_dataset(model, dataset_path, batch_size=16, device=None, n
     
     # Evaluate model
     if nested:
-        results = evaluate_joint_model(model, dataloader, device, metrics)
+        results = evaluate_joint_model(model, dataloader, device, sigma_1, sigma_2, metrics)
     else:
-        results = evaluate_model(model, dataloader, device, metrics)
+        results = evaluate_model(model, dataloader, device, sigma_1, sigma_2, metrics)
     
     # Close dataset
     dataset.close()
@@ -621,7 +622,7 @@ def evaluate_model_on_dataset(model, dataset_path, batch_size=16, device=None, n
     return results
 
 
-def compare_models(models, model_names, dataset_path, batch_size=16, device=None, nested=False, metrics=None):
+def compare_models(models, model_names, dataset_path, batch_size=16, device=None, nested=False, sigma_1=None, sigma_2=None, metrics=None):
     """
     Compare multiple models on the same dataset.
     
@@ -642,7 +643,7 @@ def compare_models(models, model_names, dataset_path, batch_size=16, device=None
     for model, name in zip(models, model_names):
         print(f"Evaluating {name}...")
         model_results = evaluate_model_on_dataset(
-            model, dataset_path, batch_size, device, nested, metrics
+            model, dataset_path, batch_size, device, nested, sigma_1, sigma_2, metrics
         )
         results[name] = model_results
     

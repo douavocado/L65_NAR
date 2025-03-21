@@ -294,7 +294,7 @@ class GNNInterpNetwork(nn.Module):
         
         # Prediction heads
         self.update_classifier = nn.Sequential(
-            nn.Linear(2 * self.proj_dim + self.edge_dim, self.proj_dim),
+            nn.Linear(2 * self.proj_dim, self.proj_dim),
             nn.ReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.proj_dim, 1)
@@ -382,10 +382,10 @@ class GNNInterpNetwork(nn.Module):
             edge_feats = edge_encoded.unsqueeze(0).expand(T-1, -1, -1, -1)  # (T-1, D, D, edge_dim)
             
             # Concatenate features for update classification
-            update_feats = torch.cat([next_i, curr_j, edge_feats], dim=3)  # (T-1, D, D, 2*proj_dim + edge_dim)
+            update_feats = torch.cat([next_i, curr_j], dim=3)  # (T-1, D, D, 2*proj_dim)
             
             # Reshape for batch processing through the classifier
-            update_feats_flat = update_feats.reshape(-1, 2*self.proj_dim + self.edge_dim)
+            update_feats_flat = update_feats.reshape(-1, 2*self.proj_dim)
             class_logits_flat = self.update_classifier(update_feats_flat).squeeze(-1)  # ((T-1)*D*D)
             class_logits = class_logits_flat.reshape(T-1, D, D)  # (T-1, D, D)
             
@@ -517,7 +517,7 @@ class GNNJointInterpNetwork(nn.Module):
         ])
         
         self.update_classifiers = nn.ModuleDict({algo: nn.Sequential(
-            nn.Linear(2 * self.proj_dim + self.edge_dim, self.proj_dim),
+            nn.Linear(2 * self.proj_dim, self.proj_dim),
             nn.ReLU(),
             nn.Dropout(self.dropout),
             nn.Linear(self.proj_dim, 1)
@@ -624,10 +624,10 @@ class GNNJointInterpNetwork(nn.Module):
                 edge_feats = edge_encoded.unsqueeze(0).expand(T-1, -1, -1, -1)  # (T-1, D, D, edge_dim)
                 
                 # Concatenate features for update classification
-                update_feats = torch.cat([next_i, curr_j, edge_feats], dim=3)  # (T-1, D, D, 2*proj_dim + edge_dim)
+                update_feats = torch.cat([next_i, curr_j], dim=3)  # (T-1, D, D, 2*proj_dim)
                 
                 # Reshape for batch processing through the classifier
-                update_feats_flat = update_feats.reshape(-1, 2*self.proj_dim + self.edge_dim)
+                update_feats_flat = update_feats.reshape(-1, 2*self.proj_dim)
                 class_logits_flat = self.update_classifiers[algo](update_feats_flat).squeeze(-1)  # ((T-1)*D*D)
                 class_logits = class_logits_flat.reshape(T-1, D, D)  # (T-1, D, D)
                 
