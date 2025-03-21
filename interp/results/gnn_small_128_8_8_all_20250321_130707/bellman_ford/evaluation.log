@@ -1,0 +1,31 @@
+2025-03-21 13:07:07,051 - model_evaluation - INFO - Starting evaluation of model from directory: interp_checkpoints/bellman_ford/gnn_small_128_8_8_all
+2025-03-21 13:07:07,051 - model_evaluation - INFO - Using config file: interp_checkpoints/bellman_ford/gnn_small_128_8_8_all/gnn_small_128_8_8_all_config.json
+2025-03-21 13:07:07,051 - model_evaluation - INFO - Using checkpoint file: interp_checkpoints/bellman_ford/gnn_small_128_8_8_all/gnn_small_128_8_8_all.pth
+2025-03-21 13:07:07,051 - model_evaluation - INFO - Algorithm: bellman_ford
+2025-03-21 13:07:07,051 - model_evaluation - INFO - Device: cpu
+2025-03-21 13:07:07,051 - model_evaluation - INFO - Batch size: 32
+2025-03-21 13:07:07,051 - model_evaluation - INFO - Using specified algorithm from args: bellman_ford
+2025-03-21 13:07:07,051 - model_evaluation - INFO - Inferred OOD dataset path: ./data/bellman_ford/interp_data_OOD_eval.h5
+2025-03-21 13:07:07,051 - model_evaluation - INFO - Creating model from configuration...
+2025-03-21 13:07:07,054 - model_evaluation - INFO - Confirmed model is a single algorithm model
+2025-03-21 13:07:07,054 - model_evaluation - INFO - Model metadata:
+2025-03-21 13:07:07,054 - model_evaluation - INFO -   Model Type: gnn
+2025-03-21 13:07:07,054 - model_evaluation - INFO -   Learning rate: 0.0005
+2025-03-21 13:07:07,056 - model_evaluation - INFO - Model weights loaded successfully
+2025-03-21 13:07:07,056 - model_evaluation - INFO - Evaluating model on bellman_ford OOD dataset...
+2025-03-21 13:07:09,200 - model_evaluation - INFO - Evaluation completed successfully
+2025-03-21 13:07:09,200 - model_evaluation - INFO - === Evaluation Results ===
+2025-03-21 13:07:09,200 - model_evaluation - INFO - loss: 0.139433
+2025-03-21 13:07:09,200 - model_evaluation - INFO - class_accuracy: 0.954381
+2025-03-21 13:07:09,200 - model_evaluation - INFO - class_precision: 0.950166
+2025-03-21 13:07:09,200 - model_evaluation - INFO - class_recall: 0.954682
+2025-03-21 13:07:09,200 - model_evaluation - INFO - class_f1: 0.952265
+2025-03-21 13:07:09,200 - model_evaluation - INFO - dist_mae: 0.309561
+2025-03-21 13:07:09,200 - model_evaluation - INFO - dist_mse: 0.18318147957324982
+2025-03-21 13:07:09,200 - model_evaluation - INFO - dist_mae_correct_pi: 0.320389
+2025-03-21 13:07:09,200 - model_evaluation - INFO - dist_mae_incorrect_pi: 0.083026
+2025-03-21 13:07:09,200 - model_evaluation - INFO - dist_mae_self_pi: 0.638793
+2025-03-21 13:07:09,200 - model_evaluation - INFO - dist_mae_nonself_pi: 0.304899
+2025-03-21 13:07:09,201 - model_evaluation - INFO - Metrics saved to: interp/results/gnn_small_128_8_8_all_20250321_130707/bellman_ford/metrics.yaml
+2025-03-21 13:07:09,585 - model_evaluation - INFO - Visualization saved to: interp/results/gnn_small_128_8_8_all_20250321_130707/bellman_ford/metrics_visualization.png
+2025-03-21 13:07:09,585 - model_evaluation - INFO - Evaluation completed. All results saved to interp/results/gnn_small_128_8_8_all_20250321_130707

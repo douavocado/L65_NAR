@@ -1,0 +1,22 @@
+{
+    "model_type": "gnn",
+    "model": {
+        "hidden_dim": 128,
+        "proj_dim": 64,
+        "msg_dim": 16,
+        "edge_dim": 16,
+        "gnn_layers": 1,
+        "dropout": 0.1
+    },
+    "training": {
+        "learning_rate": 0.0005,
+        "batch_size": 8,
+        "num_epochs": 150,
+        "patience": 5,
+        "algo": "bellman_ford",
+        "model_name": "gnn_small_64_16_16",
+        "dataset": "all",
+        "sigma_1": 0.7071067811865476,
+        "sigma_2": null
+    }
+}

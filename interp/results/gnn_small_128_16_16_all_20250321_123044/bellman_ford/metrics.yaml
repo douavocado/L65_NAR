@@ -1,0 +1,27 @@
+class_accuracy: 0.9544917257683215
+class_f1: 0.9523007164264079
+class_precision: 0.9504483551179448
+class_recall: 0.9545574595160826
+dist_mae: 0.32142966985702515
+dist_mae_correct_pi: 0.33278408646583557
+dist_mae_incorrect_pi: 0.08328142762184143
+dist_mae_nonself_pi: 0.31683114171028137
+dist_mae_self_pi: 0.6461711525917053
+dist_mse: !!python/object/apply:numpy._core.multiarray.scalar
+- !!python/object/apply:numpy.dtype
+  args:
+  - f4
+  - false
+  - true
+  state: !!python/tuple
+  - 3
+  - <
+  - null
+  - null
+  - null
+  - -1
+  - -1
+  - 0
+- !!binary |
+  ayZIPg==
+loss: 0.13251028260123646
