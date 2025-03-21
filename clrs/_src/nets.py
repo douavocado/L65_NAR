@@ -300,7 +300,7 @@ class Net(hk.Module):
             first_step=True,
             **common_args)
       else:
-        hiddens, mp_state, lean_mp_state = self._msg_passing_step(
+        mp_state, lean_mp_state = self._msg_passing_step(
             mp_state,
             i=0,
             first_step=True,
