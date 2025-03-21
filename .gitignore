@@ -22,6 +22,7 @@ venv/
 downloads/CLRS30/**
 data/**
 interp_checkpoints/**
+logs/**
 
 # used for training
 run.py
