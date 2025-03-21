@@ -1117,7 +1117,6 @@ def mst_prim(A: _Array, s: int) -> _Out:
   pi = np.arange(A.shape[0]) # predecessor with shortest distance for each node 
   key[s] = 0
   in_queue[s] = 1
-  u = s
 
   upd_pi = np.arange(A.shape[0]).astype(np.float64)
   upd_d = np.full(A.shape[0], 0.)
@@ -1140,24 +1139,25 @@ def mst_prim(A: _Array, s: int) -> _Out:
     upd_pi = np.arange(A.shape[0]).astype(np.float64)
     upd_d.fill(0.)
 
-    prev_u = u.copy()
-
     u = np.argsort(key + (1.0 - in_queue) * 1e9)[0]  # queued/accessible node with shortest distance (drop-in for extract-min)
-    upd_pi[u] = pi[prev_u]
-    upd_d[u] = A[prev_u, u]
+    # upd_pi[u] = prev_u
+    # upd_d[u] = A[prev_u, u]
     if in_queue[u] == 0: # no node is queued
       break
     mark[u] = 1 # mark node as visited
     in_queue[u] = 0 # remove from queue (no longer needs to be visited)
-    for v in range(A.shape[0]): # for all non-visited neighbours of the node
+    
+    for v in range(A.shape[0]): # for all non-visited neighbours of the node      
       if A[u, v] != 0: 
         if mark[v] == 0 and (in_queue[v] == 0 or A[u, v] < key[v]): # if they're becoming accessible for the first time or now have a shorter distance
           pi[v] = u # update predecessor with shortest distance
           key[v] = A[u, v] # update shortest distance
           in_queue[v] = 1 # queue them as accessible
-
-          # upd_pi[v] = pi[v]
-          # upd_d[v] = key[v]
+    
+    next_u = np.argsort(key + (1.0 - in_queue) * 1e9)[0]
+    if in_queue[next_u] != 0:
+      upd_pi[next_u] = pi[next_u]
+      upd_d[next_u] = key[next_u]
 
     probing.push(
         probes,
