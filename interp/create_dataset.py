@@ -241,7 +241,6 @@ def create_individual_dataset(lengths, algo, num_samples_per_length, args):
             num_samples=num_samples_per_length,
             length=length,
         )
-
         # Get dummy trajectory and initialize model
         dummy_traj = [sampler.next()]
         model = load_model(model_params, dummy_traj, spec, f'best_{algo}.pkl')
@@ -325,6 +324,17 @@ def create_individual_dataset(lengths, algo, num_samples_per_length, args):
             if actual_cutoff_idx > hidden_states.shape[0]:
                 hidden_states = np.concatenate([hidden_states, np.copy(hidden_states[-1])[np.newaxis,:,:] * np.ones((actual_cutoff_idx - hidden_states.shape[0], hidden_states.shape[1], hidden_states.shape[2]), dtype=np.float32)], axis=0)
             
+            if args.noise_level > 0:
+                # add noise to hidden states
+                # this is NOT for data augmentation purposes. The noise is meant to mimic the hidden states of a worse mpnn model (in nar performance)
+                # the noise level we add at each time step is based on the empirical standard deviation of the hidden states at each time step
+                # as inherently the hidden states are not normalised, we need to scale the noise accordingly
+                # we shall also add the same level of noise across all nodes
+                emp_noise_level = np.std(hidden_states, axis=-1) # (T, H, D) -> (T, H)
+                hidden_states += np.random.normal(0, np.repeat(np.expand_dims(emp_noise_level * args.noise_level, axis=-1), hidden_states.shape[2], axis=-1), hidden_states.shape)
+            elif args.noise_level == -1: # full noise, with standard deviation of 0.1
+                hidden_states = np.random.normal(0, 0.1, hidden_states.shape)
+
             datapoint = {
                 'hidden_states': np.copy(hidden_states),
                 'graph_adj': np.copy(graph_adj),
@@ -364,6 +374,7 @@ def main(args):
             save_root = os.path.join("data", "_".join(algorithms) + "_sync")
         else:
             save_root = os.path.join("data", "_".join(algorithms))
+        
         if not os.path.exists(save_root):
             os.makedirs(save_root)
         
@@ -378,8 +389,16 @@ def main(args):
     # split into train and test
     train_data, test_data = train_test_split(data, test_size=args.split, random_state=42)
     
-    train_save_name = "interp_data_" + args.dataset + ".h5"
-    val_save_name = "interp_data_" + args.dataset + "_eval.h5"
+    if args.noise_level > 0:
+        noise_str = str(args.noise_level).replace('.', '_')
+        train_save_name = f"interp_data_{args.dataset}_noise_{noise_str}.h5"
+        val_save_name = f"interp_data_{args.dataset}_noise_{noise_str}_eval.h5"
+    elif args.noise_level == -1: # full noise
+        train_save_name = f"interp_data_{args.dataset}_full_noise.h5"
+        val_save_name = f"interp_data_{args.dataset}_full_noise_eval.h5"
+    else:
+        train_save_name = f"interp_data_{args.dataset}.h5"
+        val_save_name = f"interp_data_{args.dataset}_eval.h5"
     train_save_path = os.path.join(save_root, train_save_name)
     val_save_path = os.path.join(save_root, val_save_name)
     
@@ -409,5 +428,6 @@ if __name__ == "__main__":
     parser.add_argument("--sync", action="store_true", help="Only relevant for joint dataset creation, whether to have synchronous samples for each algorithm.")
     parser.add_argument("--buffer", type=int, default=0, help= "Buffer size for how many trailing zeros for each algorithm.")
     parser.add_argument("--split", type=float, default=0.2, help= "The fraction of the dataset to use for testing.")
+    parser.add_argument("--noise_level", type=float, default=0.0, help= "The Gaussian noise level added to hidden states for the dataset for both training and evaluation. If this number is -1, then represents only noise for hidden states") # only implement for single training algorithm
     args = parser.parse_args()
     main(args)

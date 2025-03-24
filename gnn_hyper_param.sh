@@ -8,7 +8,7 @@ set -e
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 
 # Directory containing model configurations
-CONFIG_DIR="interp/configs/model_param_gnn"
+CONFIG_DIR="interp/configs/layers_gnn"
 # Device to use (cuda or cpu)
 DEVICE="cpu"
 # Dataset to use

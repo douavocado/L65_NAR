@@ -212,27 +212,17 @@ def infer_ood_dataset(config, algorithm, data_dir):
     Returns:
         Path to the OOD dataset
     """
-    # First check if the config specifies a dataset path for this algorithm
-    if 'datasets' in config and algorithm in config['datasets']:
-        # If the config has a dataset for this algorithm, get the OOD version
-        dataset_info = config['datasets'][algorithm]
-        if isinstance(dataset_info, dict) and 'ood' in dataset_info:
-            return dataset_info['ood']
-        elif isinstance(dataset_info, str) and os.path.exists(dataset_info):
-            # Try to infer OOD dataset from the training dataset path
-            train_path = dataset_info
-            if '_train' in train_path:
-                ood_path = train_path.replace('_train', '_ood')
-                if os.path.exists(ood_path):
-                    return ood_path
-            elif '.h5' in train_path:
-                ood_path = train_path.replace('.h5', '_ood.h5')
-                if os.path.exists(ood_path):
-                    return ood_path
-    
+    noise_level = config.get('training', {}).get('noise_level', 0.0)
+    if noise_level > 0:
+        noise_str = str(noise_level).replace('.', '_')
+        ood_dataset = f"interp_data_OOD_noise_{noise_str}_eval.h5"
+    elif noise_level == -1: # full noise
+        ood_dataset = f"interp_data_OOD_full_noise_eval.h5"
+    else:
+        ood_dataset = f"interp_data_OOD_eval.h5"
     # If we can't infer from config, try standard dataset locations
     standard_paths = [
-        os.path.join(data_dir, f"{algorithm}", "interp_data_OOD_eval.h5"),
+        os.path.join(data_dir, f"{algorithm}", ood_dataset),
     ]
     for path in standard_paths:
         if os.path.exists(path):

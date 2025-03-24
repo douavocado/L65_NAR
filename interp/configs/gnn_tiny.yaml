@@ -1,11 +1,11 @@
-# Configuration for a smaller GNNInterpNetwork
+# Configuration for a tiny GNNInterpNetwork
 model_type: "gnn"
 
 model:
   hidden_dim: 128
-  proj_dim: 128
-  msg_dim: 8
-  edge_dim: 16
+  proj_dim: 8
+  msg_dim: 4
+  edge_dim: 4
   gnn_layers: 1
   dropout: 0.1
 
@@ -15,4 +15,4 @@ training:
   num_epochs: 150
   patience: 4
   algo: "bellman_ford"
-  model_name: "gnn_small"
+  model_name: "gnn_tiny"

@@ -11,6 +11,7 @@ class LossFunction:
         """
         self.sigma_1 = sigma_1 # the larger the sigma, the less weight on the distance loss
         self.sigma_2 = sigma_2
+        self.cross_entropy_loss = CrossEntropyLoss()
     
     def __call__(self, dist_ins, dist_target, class_ins, class_target):
         return self.loss(dist_ins, dist_target, class_ins, class_target)
@@ -26,7 +27,7 @@ class LossFunction:
         if self.sigma_2 is not None and (~mask).sum() > 0: # deal with the case where there are all non-self edges, to not produce nan result 
             dist_loss += F.mse_loss(dist_ins[~mask], dist_target[~mask]) / (2*self.sigma_2 ** 2)
 
-        class_loss = CrossEntropyLoss()(class_ins, class_target)
+        class_loss = self.cross_entropy_loss(class_ins, class_target)
         return dist_loss, class_loss
     
     

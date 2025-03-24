@@ -271,7 +271,6 @@ def main(args):
         }
         param_grid = ParameterGrid(param_values)
 
-
     for params in param_grid:
         config["model"].update(params)
         fname_ext = f"_gnnl{config['model']['gnn_layers']}_proj{config['model']['proj_dim']}_edge{config['model']['edge_dim']}_msg{config['model']['msg_dim']}" if args.tune else ""
@@ -287,6 +286,19 @@ def main(args):
         model_name = training_config.get('model_name', 'mlp_diff')
         sigma_1 = float(training_config.get('sigma_1', math.sqrt(1/2)))
         sigma_2 = training_config.get('sigma_2', None)
+        noise_level = training_config.get('noise_level', 0.0)
+
+        if args.noise_level > 0:
+            print(f"Overriding noise level from {noise_level} to {args.noise_level}")
+            noise_level = args.noise_level
+        elif args.noise_level == -1: # full noise
+            print("Overriding noise level from 0 to -1, which means full noise")
+            noise_level = -1
+        elif args.noise_level !=0:
+            raise ValueError("Invalid noise level: ", args.noise_level)
+        else:
+            noise_level = 0.0
+
         if sigma_2 is not None:
             sigma_2 = float(sigma_2)
 
@@ -296,12 +308,6 @@ def main(args):
         if args.sigma_2 is not None:
             print(f"Overriding sigma_2 from {sigma_2} to {args.sigma_2}")
             sigma_2 = args.sigma_2
-
-        # for bfs, mst_prim we do not train on distance loss. In which case sigma_1 and sigma_2 are both None
-        if alg in ["bfs", "mst_prim_bfs"]:
-            sigma_1 = None
-            sigma_2 = None
-            print("Not training on distance loss for bfs and mst_prim_bfs, setting sigma_1 and sigma_2 to None")
 
         # Override with command line arguments if provided
         if args.learning_rate is not None:
@@ -338,7 +344,12 @@ def main(args):
             joint_training = False
             print("Performing single algorithm training on the following algorithm: ", alg)
 
-        
+        # for bfs, mst_prim we do not train on distance loss. In which case sigma_1 and sigma_2 are both None
+        if alg in ["bfs", "mst_prim"]:
+            sigma_1 = None
+            sigma_2 = None
+            print("Not training on distance loss for bfs and mst_prim, setting sigma_1 and sigma_2 to None")
+
         if args.tune:
             print(f"Using parameters: gnn_layers {config['model']['gnn_layers']}, proj_dim {config['model']['proj_dim']}, edge_dim {config['model']['edge_dim']}, msg_dim {config['model']['msg_dim']}")
             
@@ -354,7 +365,13 @@ def main(args):
 
         
         # Model name and paths
-        checkpoint_dir = os.path.join("interp_checkpoints", alg, f"{model_name}_{dataset_name}{fname_ext}")
+        if noise_level > 0:
+            noise_str = str(noise_level).replace('.', '_')
+            checkpoint_dir = os.path.join("interp_checkpoints", alg, f"{model_name}_{dataset_name}_noise_{noise_str}{fname_ext}")
+        elif noise_level == -1: # full noise
+            checkpoint_dir = os.path.join("interp_checkpoints", alg, f"{model_name}_{dataset_name}_full_noise{fname_ext}")
+        else:
+            checkpoint_dir = os.path.join("interp_checkpoints", alg, f"{model_name}_{dataset_name}{fname_ext}")
         os.makedirs(checkpoint_dir, exist_ok=True)
         model_save_path = os.path.join(checkpoint_dir, f"{model_name}_{dataset_name}{fname_ext}.pth")
         config_save_path = os.path.join(checkpoint_dir, f"{model_name}_{dataset_name}{fname_ext}_config.json")
@@ -368,19 +385,22 @@ def main(args):
         
         val_data_root = os.path.join("data", alg) # don't need to evaluate on sync data
         
-        if dataset_name == "all":
-            train_pth = os.path.join(data_root, "interp_data_all.h5")
-        elif dataset_name == "16":
-            train_pth = os.path.join(data_root, "interp_data_16.h5")
-        elif dataset_name == "8":
-            train_pth = os.path.join(data_root, "interp_data_8.h5")
-        elif dataset_name == "OOD":
-            train_pth = os.path.join(data_root, "interp_data_OOD.h5")
-        else:
-            raise ValueError(f"Dataset {dataset_name} not found")
+        dataset_name = f"interp_data_{dataset_name}"
+        if noise_level > 0:
+            noise_str = str(noise_level).replace('.', '_')
+            dataset_name += f"_noise_{noise_str}"
+        elif noise_level == -1: # full noise  
+            dataset_name += "_full_noise"
+        train_pth = os.path.join(data_root, dataset_name + ".h5")
 
         # Validation always on graphs of size 16
-        val_pth = os.path.join(val_data_root, "interp_data_16_eval.h5")
+        if noise_level > 0: 
+            noise_str = str(noise_level).replace('.', '_')
+            val_pth = os.path.join(val_data_root, f"interp_data_16_noise_{noise_str}_eval.h5")
+        elif noise_level == -1: # full noise
+            val_pth = os.path.join(val_data_root, "interp_data_16_full_noise_eval.h5")
+        else:
+            val_pth = os.path.join(val_data_root, "interp_data_16_eval.h5")
 
         print("loading train dataset from ", train_pth)
         train_dataset = HDF5Dataset(train_pth, nested=joint_training)
@@ -485,6 +505,7 @@ def main(args):
                     updated_config['training']['model_name'] = model_name
                     updated_config['training']['sigma_1'] = sigma_1
                     updated_config['training']['sigma_2'] = sigma_2
+                    updated_config['training']['noise_level'] = noise_level
                     json.dump(updated_config, f, indent=4)
                 print(f"Saved best model to {model_save_path} and config to {config_save_path}")
                 counter = 0  # Reset patience counter
@@ -536,5 +557,6 @@ if __name__ == "__main__":
     parser.add_argument("--sigma_1", type=float, help="Sigma_1 for the distance loss.")
     parser.add_argument("--sigma_2", type=float, help="Sigma_2 for the distance loss.")
     parser.add_argument("--tune", action="store_true", help="Whether to hyperparameter tune the model.")
+    parser.add_argument("--noise_level", type=float, default=0.0, help= "The Gaussian noise level added to hidden states for the dataset for both training and evaluation. If this number is -1, then represents only noise for hidden states") # only implement for single training algorithm
     args = parser.parse_args()
     main(args)

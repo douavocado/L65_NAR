@@ -306,7 +306,7 @@ class GNNInterpNetwork(nn.Module):
             nn.Dropout(self.dropout),
             nn.Linear(self.proj_dim, 1)
         )
-    
+
     def forward(self, x, edge_w, batch, no_graphs, time_i):
         """
         Same input/output interface as InterpNetwork, but uses GNN message passing

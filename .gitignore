@@ -23,6 +23,7 @@ downloads/CLRS30/**
 data/**
 interp_checkpoints/**
 logs/**
+interp/results/**
 
 # used for training
 run.py
