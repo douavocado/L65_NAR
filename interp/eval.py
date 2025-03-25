@@ -15,6 +15,7 @@ import glob
 from interp.config import load_config, create_model_from_config
 from interp.evaluation import evaluate_model_on_dataset, visualize_results
 from interp.evaluation import analyze_model_behavior, analyze_examples, visualize_example, visualize_examples_summary, create_dataloader
+from interp.evaluation import visualize_temporal_performance, analyze_full_examples, visualize_full_example
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate a trained model on OOD datasets")
@@ -121,7 +122,7 @@ def create_results_dir(model_dir, algorithm):
     
     # Create timestamped directory to avoid overwriting
     timestamp = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    results_dir = os.path.join(results_base, f"{model_name}_{timestamp}")
+    results_dir = os.path.join(results_base, f"{model_name}", f"{timestamp}")
     
     # Create directory
     os.makedirs(results_dir, exist_ok=True)
@@ -415,13 +416,16 @@ def main():
     # Create visualization subfolders
     error_examples_dir = os.path.join(stats_dir, "error_examples")
     correct_examples_dir = os.path.join(stats_dir, "correct_examples")
+    error_full_examples_dir = os.path.join(stats_dir, "error_full_examples")
+    correct_full_examples_dir = os.path.join(stats_dir, "correct_full_examples")
     os.makedirs(error_examples_dir, exist_ok=True)
     os.makedirs(correct_examples_dir, exist_ok=True)
+    os.makedirs(error_full_examples_dir, exist_ok=True)
+    os.makedirs(correct_full_examples_dir, exist_ok=True)
     
     logger.info("Generating additional visualizations...")
     
     # Create dataloader for visualization
-    
     dataloader = create_dataloader(args.ood_dataset, batch_size=args.batch_size, shuffle=False)
     
     # 1. Analyze model behavior on all samples
@@ -448,27 +452,101 @@ def main():
     logger.info(f"Generating error example visualizations from all dataset: {all_dataset_path}")
     error_examples = analyze_examples(
         model, visual_dataloader, args.device,
-        num_examples=1000, type="error"
+        num_examples=5, type="error"
     )
     # only choose to plot random 5 samples
-    error_examples = random.sample(error_examples, 5)
-    for i, example in enumerate(error_examples):
-        viz_path = os.path.join(error_examples_dir, f"error_example_{i+1}.png")
-        visualize_example(example, save_path=viz_path)
+    # Do not show edge weights for bfs algorithm
+    # Do not show distance error for bfs and mst_prim algorithm
+    if args.algorithm == "bfs":
+        error_examples = random.sample(error_examples, 5)
+        for i, example in enumerate(error_examples):
+            viz_path = os.path.join(error_examples_dir, f"error_example_{i+1}.png")
+            visualize_example(example, save_path=viz_path, show_edge_weights=False, show_dist_error=False)
+    elif args.algorithm == "mst_prim":
+        error_examples = random.sample(error_examples, 5)
+        for i, example in enumerate(error_examples):
+            viz_path = os.path.join(error_examples_dir, f"error_example_{i+1}.png")
+            visualize_example(example, save_path=viz_path, show_edge_weights=True, show_dist_error=False)
+    else:
+        for i, example in enumerate(error_examples):
+            viz_path = os.path.join(error_examples_dir, f"error_example_{i+1}.png")
+            visualize_example(example, save_path=viz_path, show_edge_weights=True)
     logger.info(f"Error examples saved to: {error_examples_dir}")
     
     # 3. Visualize correct examples
     logger.info(f"Generating correct example visualizations from all dataset: {all_dataset_path}")
     correct_examples = analyze_examples(
         model, visual_dataloader, args.device,
-        num_examples=1000, type="correct"
+        num_examples=5, type="correct"
     )
     # only choose to plot random 5 samples
-    correct_examples = random.sample(correct_examples, 5)
-    for i, example in enumerate(correct_examples):
-        viz_path = os.path.join(correct_examples_dir, f"correct_example_{i+1}.png")
-        visualize_example(example, save_path=viz_path)
+    if args.algorithm == "bfs":
+        for i, example in enumerate(correct_examples):
+            viz_path = os.path.join(correct_examples_dir, f"correct_example_{i+1}.png")
+            visualize_example(example, save_path=viz_path, show_edge_weights=False, show_dist_error=False)
+    elif args.algorithm == "mst_prim":
+        for i, example in enumerate(correct_examples):
+            viz_path = os.path.join(correct_examples_dir, f"correct_example_{i+1}.png")
+            visualize_example(example, save_path=viz_path, show_edge_weights=True, show_dist_error=False)
+    else:
+        for i, example in enumerate(correct_examples):
+            viz_path = os.path.join(correct_examples_dir, f"correct_example_{i+1}.png")
+            visualize_example(example, save_path=viz_path)
     logger.info(f"Correct examples saved to: {correct_examples_dir}")
+    
+    # 4. Generate full dynamics visualizations for error examples
+    logger.info(f"Generating full dynamics visualizations for error examples")
+    error_full_examples = analyze_full_examples(
+        model, visual_dataloader, args.device,
+        num_examples=5, example_type="error"
+    )
+    if args.algorithm == "bfs":
+        for i, example in enumerate(error_full_examples):
+            viz_path = os.path.join(error_full_examples_dir, f"error_full_example_{i+1}.png")
+            # Limit max timesteps if needed for readability
+            max_timesteps = min(example['num_timesteps'], 10)  # Show at most 10 timesteps
+            visualize_full_example(example, save_path=viz_path, max_timesteps=max_timesteps, show_edge_weights=False)
+    else:
+        for i, example in enumerate(error_full_examples):
+            viz_path = os.path.join(error_full_examples_dir, f"error_full_example_{i+1}.png")
+            # Limit max timesteps if needed for readability
+            max_timesteps = min(example['num_timesteps'], 10)  # Show at most 10 timesteps
+            visualize_full_example(example, save_path=viz_path, max_timesteps=max_timesteps, show_edge_weights=True)
+    logger.info(f"Full error examples saved to: {error_full_examples_dir}")
+    
+    # 5. Generate full dynamics visualizations for correct examples
+    logger.info(f"Generating full dynamics visualizations for correct examples")
+    correct_full_examples = analyze_full_examples(
+        model, visual_dataloader, args.device,
+        num_examples=5, example_type="correct"
+    )
+    if args.algorithm == "bfs":
+        for i, example in enumerate(correct_full_examples):
+            viz_path = os.path.join(correct_full_examples_dir, f"correct_full_example_{i+1}.png")
+            # Limit max timesteps if needed for readability
+            max_timesteps = min(example['num_timesteps'], 10)  # Show at most 10 timesteps
+            visualize_full_example(example, save_path=viz_path, max_timesteps=max_timesteps, show_edge_weights=False)
+    else:
+        for i, example in enumerate(correct_full_examples):
+            viz_path = os.path.join(correct_full_examples_dir, f"correct_full_example_{i+1}.png")
+            visualize_full_example(example, save_path=viz_path, max_timesteps=max_timesteps, show_edge_weights=True)
+    logger.info(f"Full correct examples saved to: {correct_full_examples_dir}")
+    
+    # 6. Generate temporal performance visualizations
+    logger.info(f"Generating temporal performance visualizations from all dataset: {all_dataset_path}")
+    temporal_plots_dir = os.path.join(stats_dir, "temporal_plots")
+    os.makedirs(temporal_plots_dir, exist_ok=True)
+    
+    # Use visualize_temporal_performance to generate plots
+    _ = visualize_temporal_performance(
+        model=model,
+        dataloader=dataloader,
+        sigma_1=sigma_1,
+        sigma_2=sigma_2,
+        examples=5,  # Generate 5 example plots
+        save_path=temporal_plots_dir
+    )
+    logger.info(f"Temporal performance visualizations saved to: {temporal_plots_dir}")
     
     # Print summary to console
     print(f"Evaluation results for {args.algorithm}:")

@@ -1,5 +1,6 @@
 # Functions that evaluate the performance of the model
 
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -1096,7 +1097,7 @@ def analyze_errors(model, dataloader, device, num_examples=5):
     return error_examples
 
 
-def analyze_examples(model, dataloader, device, num_examples=5, type="all", specific_nodes=None):
+def analyze_examples(model, dataloader, device, num_examples=5, type="all", specific_nodes=None, use_all=False):
     """
     Analyze and visualize model predictions for any examples, not just errors.
     
@@ -1107,16 +1108,26 @@ def analyze_examples(model, dataloader, device, num_examples=5, type="all", spec
         num_examples: Number of examples to collect
         type: Type of examples to collect ("all", "error", "correct")
         specific_nodes: Optional list of specific node indices to focus on
-        
+        use_all: Whether to use all examples, or avoid examples from the same graph
     Returns:
         List of example dictionaries
     """
     model.eval()
     
+    # Create a shuffled version of the dataloader
+    shuffled_dataloader = torch.utils.data.DataLoader(
+        dataloader.dataset,
+        batch_size=dataloader.batch_size,
+        shuffle=True,
+        num_workers=dataloader.num_workers if hasattr(dataloader, 'num_workers') else 0,
+        collate_fn=dataloader.collate_fn if hasattr(dataloader, 'collate_fn') else None
+    )
+    
     examples = []
+    seen_datapoints = set()  # Track datapoints we've already sampled from
     
     with torch.no_grad():
-        for batch_idx, batch in enumerate(dataloader):
+        for batch_idx, batch in enumerate(shuffled_dataloader):
             batch_size = batch['num_graphs']
             batch_i = batch['all_cumsum']
             time_i = batch['all_cumsum_timesteps']
@@ -1133,6 +1144,13 @@ def analyze_examples(model, dataloader, device, num_examples=5, type="all", spec
             
             # Process each graph in the batch
             for i in range(len(class_out)):
+                # Create a unique identifier for this datapoint
+                datapoint_id = batch_idx*batch_size + i
+                
+                # Skip if we've already seen this datapoint
+                if datapoint_id in seen_datapoints:
+                    continue
+                
                 # Get predictions and targets for this graph
                 class_logits = class_out[i]  # (T-1, D, D)
                 dist_preds = dist_out[i]  # (T-1, D)
@@ -1158,6 +1176,13 @@ def analyze_examples(model, dataloader, device, num_examples=5, type="all", spec
                     # All examples are interesting
                     interesting_mask = torch.ones_like(class_preds, dtype=torch.bool)
                 
+                # Check if there are any interesting examples in this datapoint
+                if not interesting_mask.any():
+                    continue
+                        
+                # Collect all potential examples from this datapoint
+                candidate_examples = []
+                
                 # For each time step, collect examples
                 for t in range(class_targets.size(0)):
                     for n in range(class_targets.size(1)):
@@ -1173,7 +1198,7 @@ def analyze_examples(model, dataloader, device, num_examples=5, type="all", spec
                         
                         # Create example
                         example = {
-                            'graph_idx': batch_idx*batch_size + i,
+                            'graph_idx': datapoint_id,
                             'time_step': t,
                             'node_idx': n,
                             'true_source': class_targets[t, n].item(),
@@ -1185,15 +1210,25 @@ def analyze_examples(model, dataloader, device, num_examples=5, type="all", spec
                             'is_correct': (class_preds[t, n] == class_targets[t, n]).item(),
                             'dist_error': abs(dist_preds[t, n].item() - dist_targets[t, n].item()),
                         }
-                        examples.append(example)
-                        
-                        if len(examples) >= num_examples:
-                            return examples
+                        candidate_examples.append(example)
+                
+                if use_all:
+                    examples.extend(candidate_examples)
+                else:
+                    # If we found any qualifying examples, randomly select one
+                    if candidate_examples:
+                        import random
+                        selected_example = random.choice(candidate_examples)
+                        examples.append(selected_example)
+                        seen_datapoints.add(datapoint_id)
+                
+                if len(examples) >= num_examples:
+                    return examples
     
     return examples
 
 
-def visualize_example(example, save_path=None):
+def visualize_example(example, save_path=None, show_edge_weights=True, show_dist_error=True):
     """
     Visualize any example (correct or incorrect) with enhanced aesthetics.
     
@@ -1218,7 +1253,7 @@ def visualize_example(example, save_path=None):
     for i in range(n_nodes):
         for j in range(n_nodes):
             if edge_weights[i, j] > 0:
-                G.add_edge(i, j, weight=edge_weights[i, j])
+                G.add_edge(i, j, weight=1-edge_weights[i, j])
     
     # Create a figure with two subplots - graph and probability distribution
     fig = plt.figure(figsize=(18, 10))
@@ -1230,16 +1265,17 @@ def visualize_example(example, save_path=None):
     pos = nx.spring_layout(G, k=0.5, iterations=100, seed=42)
     
     # Draw edges with varying width based on weight
-    edge_widths = [edge_weights[u, v] * 2 for u, v in G.edges()]
+    edge_widths = [0.75 for u, v in G.edges()]
     nx.draw_networkx_edges(G, pos, width=edge_widths, alpha=0.6, 
                           edge_color='gray', arrows=True, 
                           arrowstyle='-|>', arrowsize=15, ax=graph_ax)
     
     # Draw edge labels with better formatting
-    edge_labels = {(i, j): f"{edge_weights[i, j]:.1f}" 
-                  for i, j in G.edges() if edge_weights[i, j] > 0}
-    nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, 
-                                font_size=9, font_color='navy', ax=graph_ax)
+    if show_edge_weights:
+        edge_labels = {(i, j): f"{edge_weights[i, j]:.1f}" 
+                      for i, j in G.edges() if edge_weights[i, j] > 0}
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, 
+                                    font_size=9, font_color='navy', ax=graph_ax)
     
     # Draw regular nodes
     regular_nodes = [i for i in range(n_nodes) 
@@ -1295,14 +1331,22 @@ def visualize_example(example, save_path=None):
                       fontsize=16, fontweight='bold', pad=20)
     
     # Add text with details in a nicer box
-    info_text = (
-        f"Node: {example['node_idx']}\n"
-        f"True Source: {example['true_source']}\n"
-        f"Predicted Source: {example['pred_source']}\n"
-        f"True Distance Update: {example['true_dist']:.4f}\n"
-        f"Predicted Distance Update: {example['pred_dist']:.4f}\n"
-        f"Distance Error: {example['dist_error']:.4f}"
-    )
+    # only show true distance update and predicted distance update if specified
+    if show_dist_error:
+        info_text = (
+            f"Node: {example['node_idx']}\n"
+            f"True Source: {example['true_source']}\n"
+            f"Predicted Source: {example['pred_source']}\n"
+            f"True Distance Update: {example['true_dist']:.4f}\n"
+            f"Predicted Distance Update: {example['pred_dist']:.4f}\n"
+            f"Distance Error: {example['dist_error']:.4f}"
+        )
+    else:
+        info_text = (
+            f"Node: {example['node_idx']}\n"
+            f"True Source: {example['true_source']}\n"
+            f"Predicted Source: {example['pred_source']}\n"
+        )
     
     # Use different box colors based on correctness
     box_color = 'lightgreen' if example['is_correct'] else 'mistyrose'
@@ -1475,7 +1519,7 @@ def analyze_model_behavior(model, dataloader, device, num_examples=50, save_path
         examples: List of example dictionaries
     """
     # Collect examples
-    examples = analyze_examples(model, dataloader, device, num_examples=num_examples)
+    examples = analyze_examples(model, dataloader, device, num_examples=num_examples, use_all=True)
     
     # Visualize summary
     visualize_examples_summary(examples, save_path=save_path)
@@ -1532,4 +1576,546 @@ def analyze_model_behavior(model, dataloader, device, num_examples=50, save_path
         print(f"Average confidence (incorrect): {results['avg_confidence_incorrect']:.4f}")
     
     return results, examples
+
+
+def visualize_temporal_performance(model, dataloader, sigma_1, sigma_2=None, device="cpu", examples=5, save_path=None):
+    """
+    Visualize model performance over time with heatmaps for random examples.
+    
+    Args:
+        model: The model to evaluate
+        dataloader: DataLoader containing the evaluation data
+        sigma_1: Parameter for loss function
+        sigma_2: Optional parameter for loss function
+        device: Device to run evaluation on
+        examples: Number of random examples to visualize
+        save_path: Path to save visualizations (if None, displays instead)
+        
+    Returns:
+        List of generated figures
+    """
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import random
+    from matplotlib.colors import LinearSegmentedColormap
+    import math
+    
+    model.eval()
+    loss_fn = LossFunction(sigma_1=sigma_1, sigma_2=sigma_2)
+    all_figures = []
+    
+    # Create custom colormap for prediction correctness
+    colors = [(0.8, 0.2, 0.2), (0.2, 0.8, 0.2)]  # red to green
+    cmap_correct = LinearSegmentedColormap.from_list("correct_cmap", colors, N=2)
+    
+    # Process random batch samples
+    batches = list(dataloader)
+    if not batches:
+        print("No data available in dataloader.")
+        return []
+    
+    num_visualized = 0
+    random.shuffle(batches)
+    
+    for batch in batches:
+        if num_visualized >= examples:
+            break
+            
+        batch_i = batch['all_cumsum']
+        time_i = batch['all_cumsum_timesteps']
+        batch_info = batch['batch']
+        no_graphs = batch['num_graphs']
+        hidden_states = batch['hidden_states'].to(device)
+        edge_w = batch['edge_weights'].float().to(device)
+        
+        upd_pi = batch['upd_pi'].long().to(device)
+        upd_d = batch['upd_d'].float().to(device)
+        
+        # Forward pass
+        with torch.no_grad():
+            class_out, dist_out = model(hidden_states, edge_w, batch_info, no_graphs, time_i)
+        
+        # Process each graph in the batch
+        for i in range(len(class_out)):
+            if num_visualized >= examples:
+                break
+                
+            # Get predictions and targets for this graph
+            class_logits = class_out[i].permute(0,2,1)  # (T-1, D, D)
+            dist_preds = dist_out[i]  # (T-1, D)
+            
+            # Get corresponding targets
+            t_start = time_i[i] + 1
+            t_end = time_i[i+1]
+            n_start = batch_i[i]
+            n_end = batch_i[i+1]
+            
+            class_targets = upd_pi[t_start:t_end, n_start:n_end]  # (T-1, D)
+            dist_targets = upd_d[t_start:t_end, n_start:n_end]  # (T-1, D)
+            
+            # Convert class logits to predictions
+            class_preds = torch.argmax(class_logits, dim=1)  # (T-1, D)
+            
+            # Create matrices for heatmaps
+            num_timesteps = class_targets.size(0)
+            num_nodes = class_targets.size(1)
+            
+            loss_matrix = np.zeros((num_nodes, num_timesteps))
+            correct_matrix = np.zeros((num_nodes, num_timesteps))
+            
+            # Fill matrices
+            for t in range(num_timesteps):
+                for n in range(num_nodes):
+                    # Compute loss for this node at this time
+                    node_class_logits = class_logits[t:t+1, :, n:n+1]
+                    node_dist_preds = dist_preds[t:t+1, n:n+1]
+                    node_class_targets = class_targets[t:t+1, n:n+1]
+                    node_dist_targets = dist_targets[t:t+1, n:n+1]
+                    
+                    class_loss, dist_loss = loss_fn(node_dist_preds, node_dist_targets, 
+                                                    node_class_logits, node_class_targets)
+                    total_loss = class_loss + dist_loss
+                    
+                    loss_matrix[n, t] = total_loss.item()
+                    correct_matrix[n, t] = 1 if class_preds[t, n] == class_targets[t, n] else 0
+            
+            # Calculate overall accuracy for title
+            accuracy = np.mean(correct_matrix)
+            
+            # Create figure with two subplots
+            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
+            fig.suptitle(f"Temporal Performance - Graph {i}", fontsize=16)
+            all_figures.append(fig)
+            
+            # Plot loss heatmap
+            im1 = ax1.imshow(loss_matrix, cmap='viridis', aspect='auto')
+            ax1.set_title("Loss per Node over Time", fontsize=14)
+            ax1.set_xlabel("Time Step", fontsize=12)
+            ax1.set_ylabel("Node ID", fontsize=12)
+            
+            # Plot correctness heatmap (include accuracy in title)
+            im2 = ax2.imshow(correct_matrix, cmap=cmap_correct, vmin=0, vmax=1, aspect='auto')
+            ax2.set_title(f"Prediction Correctness (Accuracy: {accuracy:.2f})", fontsize=14)
+            ax2.set_xlabel("Time Step", fontsize=12)
+            ax2.set_ylabel("Node ID", fontsize=12)
+            
+            # Dynamically adjust tick spacing based on matrix size
+            def get_tick_spacing(size):
+                if size <= 10:
+                    return 1  # Show all ticks for small matrices
+                elif size <= 20:
+                    return 2
+                elif size <= 50:
+                    return 5
+                elif size <= 100:
+                    return 10
+                else:
+                    return max(1, size // 10)  # At most 10 ticks
+            
+            # X-axis (timesteps) ticks
+            x_spacing = get_tick_spacing(num_timesteps)
+            x_ticks = np.arange(0, num_timesteps, x_spacing)
+            x_labels = [str(t) for t in x_ticks]
+            # Y-axis (nodes) ticks
+            y_spacing = get_tick_spacing(num_nodes)
+            y_ticks = np.arange(0, num_nodes, y_spacing)
+            y_labels = [str(n) for n in y_ticks]  # Show actual node IDs
+            
+            # Apply ticks to both axes
+            for ax in [ax1, ax2]:
+                ax.set_xticks(x_ticks)
+                ax.set_xticklabels(x_labels)
+                ax.set_yticks(y_ticks)
+                ax.set_yticklabels(y_labels)
+                
+                # Remove grid
+                ax.grid(False)
+            
+            # Add colorbars
+            fig.colorbar(im1, ax=ax1, label="Loss Value")
+            cbar = fig.colorbar(im2, ax=ax2, ticks=[0, 1])
+            cbar.set_ticklabels(['Incorrect', 'Correct'])
+            
+            plt.tight_layout()
+            
+            if save_path:
+                # Save figure to file
+                example_path = os.path.join(save_path, f"temporal_performance_graph_{i}.png")
+                plt.savefig(example_path, bbox_inches='tight', dpi=300)
+                plt.close(fig)
+            else:
+                plt.show()
+            
+            num_visualized += 1
+    
+    return all_figures
+
+
+def analyze_full_examples(model, dataloader, device, num_examples=5, example_type="both"):
+    """
+    Analyze and collect full temporal data for entire graph examples.
+    
+    Args:
+        model: The model to evaluate
+        dataloader: DataLoader containing the evaluation data
+        device: Device to run evaluation on
+        num_examples: Number of examples to collect
+        example_type: Type of examples to collect ("error", "correct", or "both")
+            - "error": Only examples with at least one error at any time step
+            - "correct": Only examples where all predictions are correct at all time steps
+            - "both": Both types of examples with no preference (default)
+        
+    Returns:
+        List of example dictionaries with full temporal data
+    """
+    import random
+    
+    if example_type not in ["error", "correct", "both"]:
+        raise ValueError("example_type must be 'error', 'correct', or 'both'")
+    
+    model.eval()
+    full_examples = []
+    
+    # Convert dataloader to list to allow random sampling
+    all_batches = list(dataloader)
+    if not all_batches:
+        return full_examples
+    
+    # Shuffle the order of batches
+    random_batch_indices = list(range(len(all_batches)))
+    random.shuffle(random_batch_indices)
+    
+    with torch.no_grad():
+        # Try random batches until we collect enough examples
+        for batch_idx in random_batch_indices:
+            if len(full_examples) >= num_examples:
+                break
+                
+            batch = all_batches[batch_idx]
+            batch_i = batch['all_cumsum']
+            time_i = batch['all_cumsum_timesteps']
+            batch_info = batch['batch']
+            no_graphs = batch['num_graphs']
+            hidden_states = batch['hidden_states'].to(device)
+            edge_w = batch['edge_weights'].float().to(device)
+            
+            upd_pi = batch['upd_pi'].long().to(device)
+            upd_d = batch['upd_d'].float().to(device)
+            
+            # Forward pass
+            class_out, dist_out = model(hidden_states, edge_w, batch_info, no_graphs, time_i)
+            
+            # Randomly shuffle the order of graphs within this batch
+            graph_indices = list(range(len(class_out)))
+            random.shuffle(graph_indices)
+            
+            # Process each graph in random order
+            for i in graph_indices:
+                if len(full_examples) >= num_examples:
+                    break
+                    
+                # Get predictions and targets for this graph
+                class_logits = class_out[i].permute(0,2,1)  # (T-1, D, D)
+                dist_preds = dist_out[i]  # (T-1, D)
+                
+                # Get corresponding targets
+                t_start = time_i[i] + 1
+                t_end = time_i[i+1]
+                n_start = batch_i[i]
+                n_end = batch_i[i+1]
+                
+                class_targets = upd_pi[t_start:t_end, n_start:n_end]  # (T-1, D)
+                dist_targets = upd_d[t_start:t_end, n_start:n_end]  # (T-1, D)
+                
+                # Convert class logits to predictions
+                class_preds = torch.argmax(class_logits, dim=1)  # (T-1, D)
+                
+                # Check if predictions match the filtering criteria
+                correct_pi = (class_preds == class_targets)
+                all_correct = correct_pi.all().item()
+                any_error = not all_correct
+                
+                # Skip if the example doesn't match the requested type
+                if (example_type == "error" and not any_error) or \
+                   (example_type == "correct" and not all_correct):
+                    continue
+                
+                # Create dictionary with all temporal data
+                full_example = {
+                    'graph_idx': batch_idx * no_graphs + i,
+                    'num_timesteps': class_targets.size(0),
+                    'num_nodes': class_targets.size(1),
+                    'edge_weights': edge_w[n_start:n_end, n_start:n_end].cpu().numpy(),
+                    'class_preds': class_preds.cpu().numpy(),
+                    'class_targets': class_targets.cpu().numpy(),
+                    'dist_preds': dist_preds.cpu().numpy(),
+                    'dist_targets': dist_targets.cpu().numpy(),
+                    'class_logits': F.softmax(class_logits, dim=1).cpu().numpy(),  # Store probabilities
+                    'n_start': n_start,  # Store for reference
+                    'n_end': n_end,
+                    'has_errors': any_error,
+                    'all_correct': all_correct
+                }
+                
+                # Add overall metrics
+                full_example['accuracy'] = correct_pi.float().mean().item()
+                full_example['dist_mae'] = torch.abs(dist_preds - dist_targets).mean().item()
+                
+                full_examples.append(full_example)
+    
+    return full_examples
+
+
+def visualize_full_example(example, save_path=None, max_timesteps=None, figsize=None, show_edge_weights=True):
+    """
+    Visualize complete temporal dynamics for all nodes at all time steps with prediction probabilities.
+    
+    Args:
+        example: Dictionary containing full example data
+        save_path: Optional path to save the visualization instead of displaying it
+        max_timesteps: Maximum number of timesteps to display (None for all)
+        figsize: Optional tuple for figure size
+        show_edge_weights: Whether to show edge weights
+    Returns:
+        The figure object
+    """
+    import networkx as nx
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import FancyArrowPatch
+    
+    # Set a modern style
+    plt.style.use('seaborn-v0_8-whitegrid')
+    
+    num_timesteps = example['num_timesteps']
+    num_nodes = example['num_nodes']
+    edge_weights = example['edge_weights']
+    
+    # Limit number of timesteps if specified
+    if max_timesteps is not None and num_timesteps > max_timesteps:
+        num_timesteps = max_timesteps
+    
+    # Create a graph from the edge weights
+    G = nx.DiGraph()
+    for i in range(num_nodes):
+        G.add_node(i)
+    
+    for i in range(num_nodes):
+        for j in range(num_nodes):
+            if edge_weights[i, j] > 0:
+                G.add_edge(i, j, weight=1.1-edge_weights[i, j]**0.5)
+    
+    # Use spring layout for consistent node positions across time steps
+    pos = nx.spring_layout(G, k=0.3, iterations=100, seed=42)
+    
+    # Calculate figure size based on number of timesteps if not provided
+    if figsize is None:
+        # Increase height per timestep to allow for more spacing
+        figsize = (12, 5 * num_timesteps)
+    
+    # Create figure with subplots for each time step with increased spacing
+    fig, axes = plt.subplots(num_timesteps, 1, figsize=figsize)
+    
+    # Handle case when there's only one time step
+    if num_timesteps == 1:
+        axes = [axes]
+    
+    # Define node colors for self-pointers
+    def get_node_color(is_self_pointer, is_correct, t, node):
+        # Base color
+        if is_self_pointer:
+            if is_correct:
+                return 'limegreen'  # Correct self-pointer
+            else:
+                return 'crimson'    # Incorrect self-pointer prediction
+        return 'lightblue'          # Not a self-pointer
+    
+    # Helper function to draw parent pointer arrows
+    def draw_parent_pointer(ax, source_node, target_node, color, alpha=0.8, arrowsize=15):
+        source_pos = pos[source_node]
+        target_pos = pos[target_node]
+        
+        # If it's a self-pointer, we'll handle this differently (by node coloring)
+        if source_node == target_node:
+            return
+        
+        # Calculate direction vector
+        dx = target_pos[0] - source_pos[0]
+        dy = target_pos[1] - source_pos[1]
+        
+        # Normalize
+        length = np.sqrt(dx*dx + dy*dy)
+        if length > 0:
+            dx, dy = dx/length, dy/length
+        
+        # Calculate midpoint - only draw arrows starting from source going halfway
+        # This avoids arrows being hidden by nodes
+        mid_x = source_pos[0] + dx * (length * 0.5)
+        mid_y = source_pos[1] + dy * (length * 0.5)
+        
+        # Draw the arrow with clear direction
+        arrow = FancyArrowPatch(
+            posA=source_pos,
+            posB=(mid_x, mid_y),
+            arrowstyle='-|>',
+            color=color,
+            linewidth=2,
+            alpha=alpha,
+            mutation_scale=arrowsize,
+            shrinkA=10,  # Shrink from source node
+            shrinkB=0,   # Don't shrink from target since we're only going halfway
+            zorder=2     # Below nodes but above edges
+        )
+        ax.add_patch(arrow)
+    
+    # Plot each time step
+    for t in range(num_timesteps):
+        ax = axes[t]
+        
+        # First, draw the graph structure (edges)
+        edge_widths = [0.75 for u, v in G.edges()] # same width for all edges
+        nx.draw_networkx_edges(G, pos, ax=ax, width=edge_widths, alpha=0.3, 
+                              edge_color='gray', arrows=False)
+        
+        
+        # Prepare node lists and colors for drawing
+        node_colors = {}
+        for node in range(num_nodes):
+            pred_source = example['class_preds'][t, node]
+            true_source = example['class_targets'][t, node]
+            
+            # Handle self-pointers through node coloring
+            is_self_pointer = (pred_source == node)
+            is_correct = (pred_source == true_source)
+            
+            node_colors[node] = get_node_color(is_self_pointer, is_correct, t, node)
+        
+        # Draw nodes with varying colors for self-pointers
+        for node in range(num_nodes):
+            nx.draw_networkx_nodes(
+                G, pos, 
+                nodelist=[node],
+                node_size=600, 
+                node_color=node_colors[node], 
+                edgecolors='black', 
+                linewidths=1.5,
+                ax=ax,
+                alpha=0.8
+            )
+        
+        draw_edge_from_nodes = set()
+
+        # Draw parent pointers
+        for node in range(num_nodes):
+            # Get predictions and ground truth
+            pred_source = example['class_preds'][t, node]
+            true_source = example['class_targets'][t, node]
+            
+            # Skip self-pointers (handled by node coloring)
+            if true_source == node and pred_source == node:
+                continue
+                
+            # Draw pointers according to logic (skip if it's to self)
+            if pred_source == true_source:
+                # Correct prediction - green (only if not self)
+                if node != pred_source:
+                    draw_parent_pointer(ax, node, pred_source, 'limegreen')
+                    if show_edge_weights:
+                        # then show edge weight label for all the edges coming out from the true source if we haven't done so already
+                        if true_source not in draw_edge_from_nodes:
+                            draw_edge_from_nodes.add(true_source)
+                            for j in range(num_nodes):
+                                if edge_weights[true_source, j] > 0:
+                                    weight_label = f"{edge_weights[true_source, j]:.2f}"
+                                    midpoint = ((pos[true_source][0] + pos[j][0])/2, (pos[true_source][1] + pos[j][1])/2)
+                                    ax.text(midpoint[0], midpoint[1], weight_label, fontsize=8, color='black')
+            else:
+                # Incorrect prediction - draw both (unless they're self-pointers)
+                # True source - green
+                if node != true_source:
+                    draw_parent_pointer(ax, node, true_source, 'limegreen', alpha=0.6)
+                    
+                # Predicted source - red
+                if node != pred_source:
+                    draw_parent_pointer(ax, node, pred_source, 'crimson', alpha=0.8)
+                
+                if show_edge_weights:
+                    # then show edge weight label for all the edges coming out from the true source if we haven't done so already
+                    if true_source not in draw_edge_from_nodes:
+                        draw_edge_from_nodes.add(true_source)
+                        for j in range(num_nodes):
+                            if edge_weights[true_source, j] > 0:
+                                weight_label = f"{edge_weights[true_source, j]:.2f}"
+                                midpoint = ((pos[true_source][0] + pos[j][0])/2, (pos[true_source][1] + pos[j][1])/2)
+                                ax.text(midpoint[0], midpoint[1], weight_label, fontsize=8, color='black')
+            
+        
+        # # Draw edge labels if the graph is not too dense
+        # if len(G.edges()) <= 20:
+        #     edge_labels = {(i, j): f"{edge_weights[i, j]:.1f}" 
+        #                   for i, j in G.edges() if edge_weights[i, j] > 0}
+        #     nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, 
+        #                                 font_size=8, font_color='navy', ax=ax)
+        
+        # Draw node labels (last to be on top)
+        nx.draw_networkx_labels(G, pos, ax=ax, font_size=10, font_weight='bold', font_color='black')
+        
+        # Add probability labels above each node
+        for node in range(num_nodes):
+            # Get prediction and its probability
+            pred_source = example['class_preds'][t, node]
+            prob = example['class_logits'][t, pred_source, node]
+            
+            # Position the text slightly above the node
+            node_x, node_y = pos[node]
+            offset_y = 0.15  # Adjust this value for desired height
+            
+            # Determine text color based on prediction correctness
+            text_color = 'green' if example['class_preds'][t, node] == example['class_targets'][t, node] else 'red'
+            
+            ax.text(node_x, node_y + offset_y, f"{prob:.2f}", 
+                   fontsize=8, fontweight='bold', ha='center', va='center',
+                   bbox=dict(boxstyle="round,pad=0.1", fc="white", ec="gray", alpha=0.8), color=text_color)
+        
+        # Add accuracy for this time step
+        accuracy = np.mean(example['class_preds'][t] == example['class_targets'][t])
+        ax.set_title(f"Time step {t} (Accuracy: {accuracy:.2f})", fontsize=12, pad=10)
+        ax.axis('off')
+        
+        # Set axis limits with more space
+        ax.set_xlim(min(p[0] for p in pos.values()) - 0.2, max(p[0] for p in pos.values()) + 0.2)
+        ax.set_ylim(min(p[1] for p in pos.values()) - 0.2, max(p[1] for p in pos.values()) + 0.2)
+    
+    # Add overall title
+    plt.suptitle(f"Graph {example['graph_idx']} - Full Temporal Dynamics\n"
+                f"Overall Accuracy: {example['accuracy']:.2f}, Distance MAE: {example['dist_mae']:.4f}", 
+                fontsize=16, y=1.0)
+    
+    # Add a custom legend in an empty area or consider using figlegend for better placement
+    legend_elements = [
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='lightblue',
+                  markeredgecolor='black', markersize=10, label='Node'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='limegreen',
+                  markeredgecolor='black', markersize=10, label='Self-Pointing (True)'),
+        plt.Line2D([0], [0], marker='o', color='w', markerfacecolor='crimson',
+                  markeredgecolor='black', markersize=10, label='Self-Pointing (Incorrect)'),
+        plt.Line2D([0], [0], color='limegreen', lw=2, label='True Parent Arrow'),
+        plt.Line2D([0], [0], color='crimson', lw=2, label='Incorrect Pred. Arrow')
+    ]
+    
+    # Add the legend outside the plot area to not obstruct the visualization
+    fig.legend(handles=legend_elements, loc='lower center', bbox_to_anchor=(0.5, 0), 
+              fontsize=10, ncol=3, frameon=True, fancybox=True, shadow=True)
+    
+    # Add more space between subplots
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.12, hspace=0.4)  # Increased hspace for more vertical separation
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        plt.close(fig)
+        return None
+    else:
+        plt.show()
+        return fig
 
