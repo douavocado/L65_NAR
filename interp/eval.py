@@ -1,5 +1,6 @@
 import argparse
 import os
+import random
 import torch
 import yaml
 import json
@@ -13,6 +14,7 @@ import glob
 
 from interp.config import load_config, create_model_from_config
 from interp.evaluation import evaluate_model_on_dataset, visualize_results
+from interp.evaluation import analyze_model_behavior, analyze_examples, visualize_example, visualize_examples_summary, create_dataloader
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Evaluate a trained model on OOD datasets")
@@ -109,10 +111,10 @@ def get_model_name(model_dir):
     """Extract a model name from the model directory path"""
     return os.path.basename(os.path.normpath(model_dir))
 
-def create_results_dir(model_dir):
+def create_results_dir(model_dir, algorithm):
     """Create a unique results directory for this model"""
     # Base results directory
-    results_base = os.path.join('interp', 'results')
+    results_base = os.path.join('interp', 'results', algorithm)
     
     # Get model name
     model_name = get_model_name(model_dir)
@@ -262,12 +264,12 @@ def main():
         inferred_algorithm = None
         print(f"Using specified algorithm from args: {args.algorithm}")
     # Create model-specific results directory
-    results_dir = create_results_dir(args.model_dir)
+    results_dir = create_results_dir(args.model_dir, args.algorithm)
     print(f"Results will be saved to: {results_dir}")
     
-    # Create algorithm-specific directory
-    algorithm_dir = os.path.join(results_dir, args.algorithm)
-    os.makedirs(algorithm_dir, exist_ok=True)
+    # Create directory just for statistics and image files
+    stats_dir = os.path.join(results_dir, "statistics")
+    os.makedirs(stats_dir, exist_ok=True)
     
     # Copy model files to results directory for reference
     model_files_dir = os.path.join(results_dir, "model_files")
@@ -276,7 +278,7 @@ def main():
     shutil.copy(checkpoint_path, os.path.join(model_files_dir, os.path.basename(checkpoint_path)))
     
     # Set up logging
-    log_path = os.path.join(algorithm_dir, "evaluation.log")
+    log_path = os.path.join(stats_dir, "evaluation.log")
     logger = setup_logging(log_path)
     logger.info(f"Starting evaluation of model from directory: {args.model_dir}")
     logger.info(f"Using config file: {config_path}")
@@ -284,11 +286,6 @@ def main():
     logger.info(f"Algorithm: {args.algorithm}")
     logger.info(f"Device: {args.device}")
     logger.info(f"Batch size: {args.batch_size}")
-    
-    if inferred_algorithm is not None:
-        logger.info(f"Algorithm was inferred from config: {inferred_algorithm}")
-    else:
-        logger.info(f"Using specified algorithm from args: {args.algorithm}")
     
     # Infer OOD dataset if not specified
     if args.ood_dataset is None:
@@ -397,22 +394,81 @@ def main():
             logger.info(f"{metric}: {value}")
     
     # Save metrics as YAML
-    metrics_path = os.path.join(algorithm_dir, "metrics.yaml")
+    metrics_path = os.path.join(stats_dir, "metrics.yaml")
+    metrics['dist_mse'] = float(metrics['dist_mse']) # convert to float
     with open(metrics_path, 'w') as f:
         yaml.dump(metrics, f)
     logger.info(f"Metrics saved to: {metrics_path}")
     
-    # Generate and save visualization
-    try:
-        viz_path = os.path.join(algorithm_dir, "metrics_visualization.png")
-        visualize_results(metrics, title=f"Model Evaluation on {args.algorithm} (OOD)", 
-                          save_path=viz_path)
-        logger.info(f"Visualization saved to: {viz_path}")
-    except Exception as e:
-        logger.warning(f"Failed to generate visualization: {str(e)}")
+    # # Generate and save visualization
+    # try:
+    #     #viz_path = os.path.join(algorithm_dir, "metrics_visualization.png")
+    #     visualize_results(metrics, title=f"Model Evaluation on {args.algorithm} (OOD)", 
+    #                       save_path=None)
+    #     # logger.info(f"Visualization saved to: {viz_path}")
+    # except Exception as e:
+    #     logger.warning(f"Failed to generate visualization: {str(e)}")
     
     # Save raw metrics data for further analysis
-    np.save(os.path.join(algorithm_dir, "metrics.npy"), metrics)
+    np.save(os.path.join(stats_dir, "metrics.npy"), metrics)
+    
+    # Create visualization subfolders
+    error_examples_dir = os.path.join(stats_dir, "error_examples")
+    correct_examples_dir = os.path.join(stats_dir, "correct_examples")
+    os.makedirs(error_examples_dir, exist_ok=True)
+    os.makedirs(correct_examples_dir, exist_ok=True)
+    
+    logger.info("Generating additional visualizations...")
+    
+    # Create dataloader for visualization
+    
+    dataloader = create_dataloader(args.ood_dataset, batch_size=args.batch_size, shuffle=False)
+    
+    # 1. Analyze model behavior on all samples
+    logger.info(f"Analysing model behavior on all samples from: {args.ood_dataset}")
+    behavior_path = os.path.join(stats_dir, "model_behavior_analysis.png")
+    behavior_results, examples = analyze_model_behavior(model, dataloader, args.device, num_examples=10e10, save_path=behavior_path)
+    # log behavior results
+    for metric, value in behavior_results.items():
+        logger.info(f"  {metric}: {value}")
+    logger.info(f"Model behavior analysis saved to: {behavior_path}")
+    
+    # visualise only on all dataset
+    noise_level = config.get('training', {}).get('noise_level', 0.0)
+    if noise_level > 0:
+        noise_str = str(noise_level).replace('.', '_')
+        all_dataset_path = os.path.join(args.data_dir, f"{args.algorithm}", f"interp_data_all_noise_{noise_str}_eval.h5")
+    elif noise_level == -1: # full noise
+        all_dataset_path = os.path.join(args.data_dir, f"{args.algorithm}", "interp_data_all_full_noise_eval.h5")
+    else:
+        all_dataset_path = os.path.join(args.data_dir, f"{args.algorithm}", "interp_data_all_eval.h5")
+    visual_dataloader = create_dataloader(all_dataset_path, batch_size=args.batch_size, shuffle=True) # shuffle for variation of plots
+
+    # 2. Visualize error examples
+    logger.info(f"Generating error example visualizations from all dataset: {all_dataset_path}")
+    error_examples = analyze_examples(
+        model, visual_dataloader, args.device,
+        num_examples=1000, type="error"
+    )
+    # only choose to plot random 5 samples
+    error_examples = random.sample(error_examples, 5)
+    for i, example in enumerate(error_examples):
+        viz_path = os.path.join(error_examples_dir, f"error_example_{i+1}.png")
+        visualize_example(example, save_path=viz_path)
+    logger.info(f"Error examples saved to: {error_examples_dir}")
+    
+    # 3. Visualize correct examples
+    logger.info(f"Generating correct example visualizations from all dataset: {all_dataset_path}")
+    correct_examples = analyze_examples(
+        model, visual_dataloader, args.device,
+        num_examples=1000, type="correct"
+    )
+    # only choose to plot random 5 samples
+    correct_examples = random.sample(correct_examples, 5)
+    for i, example in enumerate(correct_examples):
+        viz_path = os.path.join(correct_examples_dir, f"correct_example_{i+1}.png")
+        visualize_example(example, save_path=viz_path)
+    logger.info(f"Correct examples saved to: {correct_examples_dir}")
     
     # Print summary to console
     print(f"Evaluation results for {args.algorithm}:")

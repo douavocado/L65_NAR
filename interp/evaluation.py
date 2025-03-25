@@ -13,6 +13,25 @@ from interp.dataset import HDF5Dataset, custom_collate, nested_custom_collate
 from interp.metric import LossFunction
 
 
+def create_dataloader(dataset_path, batch_size=16, shuffle=False, joint=False):
+    """
+    Create a DataLoader for the given dataset path.
+    
+    Args: 
+        dataset_path: Path to the dataset
+        batch_size: Batch size
+        shuffle: Whether to shuffle the data
+        
+    Returns:
+        DataLoader for the given dataset
+    """
+    dataset = HDF5Dataset(dataset_path)
+    if joint:
+        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=nested_custom_collate)
+    else:
+        return DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, collate_fn=custom_collate)
+
+
 def evaluate_model(model, dataloader, device, sigma_1, sigma_2=None, metrics=None):
     """
     Evaluate a model on a dataset with multiple metrics.
@@ -650,13 +669,15 @@ def compare_models(models, model_names, dataset_path, batch_size=16, device=None
     return results
 
 
-def visualize_comparison(comparison_results, metrics=None):
+def visualize_comparison(comparison_results, metrics=None, save_path=None):
     """
     Visualize comparison of multiple models with enhanced aesthetics.
     
     Args:
         comparison_results: Dictionary of results for each model
         metrics: List of metrics to visualize (default: all metrics)
+        save_path: Path to save the visualizations instead of displaying them.
+                  If provided, will save files as {save_path}/metric_name.png
     """
     # Set a modern style
     plt.style.use('seaborn-v0_8-pastel')
@@ -712,7 +733,11 @@ def visualize_comparison(comparison_results, metrics=None):
                         plt.title(f"{metric.replace('_', ' ').title()} - {algo}")
                         plt.xticks([])
                         plt.yticks([])
-                        plt.show()
+                        if save_path:
+                            plt.savefig(os.path.join(save_path, f"{algo}_{metric}.png"), bbox_inches='tight')
+                            plt.close()
+                        else:
+                            plt.show()
                         continue
                     
                     # Create bar chart with nice colors
@@ -744,7 +769,11 @@ def visualize_comparison(comparison_results, metrics=None):
                     if 'accuracy' in metric or 'precision' in metric or 'recall' in metric or 'f1' in metric:
                         plt.axhline(y=1.0, color='r', linestyle='--', alpha=0.3)
                     
-                    plt.show()
+                    if save_path:
+                        plt.savefig(os.path.join(save_path, f"{algo}_{metric}.png"), bbox_inches='tight')
+                        plt.close()
+                    else:
+                        plt.show()
     
     else:
         # Single model comparison
@@ -783,7 +812,11 @@ def visualize_comparison(comparison_results, metrics=None):
                     plt.title(f"{metric.replace('_', ' ').title()}")
                     plt.xticks([])
                     plt.yticks([])
-                    plt.show()
+                    if save_path:
+                        plt.savefig(os.path.join(save_path, f"{metric}.png"), bbox_inches='tight')
+                        plt.close()
+                    else:
+                        plt.show()
                     continue
                 
                 # Create bar chart with nice colors
@@ -815,15 +848,20 @@ def visualize_comparison(comparison_results, metrics=None):
                 if 'accuracy' in metric or 'precision' in metric or 'recall' in metric or 'f1' in metric:
                     plt.axhline(y=1.0, color='r', linestyle='--', alpha=0.3)
                 
-                plt.show()
+                if save_path:
+                    plt.savefig(os.path.join(save_path, f"{metric}.png"), bbox_inches='tight')
+                    plt.close()
+                else:
+                    plt.show()
 
 
-def visualize_error_example(error_example):
+def visualize_error_example(error_example, save_path=None):
     """
     Visualize a single error example with enhanced aesthetics and source probabilities.
     
     Args:
         error_example: Dictionary containing error information
+        save_path: Path to save the visualization instead of displaying it
     """
     import networkx as nx
     import numpy as np
@@ -970,7 +1008,12 @@ def visualize_error_example(error_example):
         prob_ax.axis('off')
     
     plt.tight_layout()
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
 
 
 def analyze_errors(model, dataloader, device, num_examples=5):
@@ -1053,7 +1096,7 @@ def analyze_errors(model, dataloader, device, num_examples=5):
     return error_examples
 
 
-def analyze_examples(model, dataloader, device, num_examples=5, error_only=False, specific_nodes=None):
+def analyze_examples(model, dataloader, device, num_examples=5, type="all", specific_nodes=None):
     """
     Analyze and visualize model predictions for any examples, not just errors.
     
@@ -1062,7 +1105,7 @@ def analyze_examples(model, dataloader, device, num_examples=5, error_only=False
         dataloader: DataLoader containing the evaluation data
         device: Device to run evaluation on
         num_examples: Number of examples to collect
-        error_only: If True, only collect error examples (default: False)
+        type: Type of examples to collect ("all", "error", "correct")
         specific_nodes: Optional list of specific node indices to focus on
         
     Returns:
@@ -1107,8 +1150,10 @@ def analyze_examples(model, dataloader, device, num_examples=5, error_only=False
                 class_preds = torch.argmax(class_logits, dim=2)  # (T-1, D)
                 
                 # Find errors if needed
-                if error_only:
+                if type == "error":
                     interesting_mask = (class_preds != class_targets)
+                elif type == "correct":
+                    interesting_mask = (class_preds == class_targets)
                 else:
                     # All examples are interesting
                     interesting_mask = torch.ones_like(class_preds, dtype=torch.bool)
@@ -1148,12 +1193,13 @@ def analyze_examples(model, dataloader, device, num_examples=5, error_only=False
     return examples
 
 
-def visualize_example(example):
+def visualize_example(example, save_path=None):
     """
     Visualize any example (correct or incorrect) with enhanced aesthetics.
     
     Args:
         example: Dictionary containing example information
+        save_path: Optional path to save the visualization instead of displaying it
     """
     import networkx as nx
     import numpy as np
@@ -1314,15 +1360,21 @@ def visualize_example(example):
         prob_ax.axis('off')
     
     plt.tight_layout()
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        plt.close(fig)
+    else:
+        plt.show()
 
 
-def visualize_examples_summary(examples):
+def visualize_examples_summary(examples, save_path=None):
     """
     Visualize a summary of multiple examples.
     
     Args:
         examples: List of example dictionaries
+        save_path: Optional path to save the visualization instead of displaying it
     """
     # Set a modern style
     plt.style.use('seaborn-v0_8-pastel')
@@ -1400,10 +1452,15 @@ def visualize_examples_summary(examples):
     plt.tight_layout()
     plt.suptitle('Examples Analysis Summary', fontsize=16, y=1.02)
     plt.subplots_adjust(top=0.9)
-    plt.show()
+    
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight', dpi=300)
+        plt.close(fig)
+    else:
+        plt.show()
 
 
-def analyze_model_behavior(model, dataloader, device, num_examples=50):
+def analyze_model_behavior(model, dataloader, device, num_examples=50, save_path=None):
     """
     Comprehensive analysis of model behavior across multiple examples.
     
@@ -1415,12 +1472,13 @@ def analyze_model_behavior(model, dataloader, device, num_examples=50):
         
     Returns:
         Dictionary of analysis results
+        examples: List of example dictionaries
     """
     # Collect examples
     examples = analyze_examples(model, dataloader, device, num_examples=num_examples)
     
     # Visualize summary
-    visualize_examples_summary(examples)
+    visualize_examples_summary(examples, save_path=save_path)
     
     # Compute detailed statistics
     results = {}
