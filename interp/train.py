@@ -287,6 +287,7 @@ def main(args):
         sigma_1 = float(training_config.get('sigma_1', math.sqrt(1/2)))
         sigma_2 = training_config.get('sigma_2', None)
         noise_level = training_config.get('noise_level', 0.0)
+        use_gating = training_config.get('use_gating', True)
 
         if args.noise_level > 0:
             print(f"Overriding noise level from {noise_level} to {args.noise_level}")
@@ -313,7 +314,11 @@ def main(args):
         if args.learning_rate is not None:
             print(f"Overriding learning rate from {learning_rate} to {args.learning_rate}")
             learning_rate = args.learning_rate
-            
+        
+        if args.no_gating:
+            print(f"Overriding use_gating from {use_gating} to {not args.no_gating}")
+            use_gating = not args.no_gating
+        
         if args.batch_size is not None:
             print(f"Overriding batch size from {batch_size} to {args.batch_size}")
             batch_size = args.batch_size
@@ -391,16 +396,25 @@ def main(args):
             dataset_name += f"_noise_{noise_str}"
         elif noise_level == -1: # full noise  
             dataset_name += "_full_noise"
+        
+
+        if args.target_model_name is not None:
+            dataset_name += f"_{args.target_model_name}"
         train_pth = os.path.join(data_root, dataset_name + ".h5")
 
         # Validation always on graphs of size 16
         if noise_level > 0: 
             noise_str = str(noise_level).replace('.', '_')
-            val_pth = os.path.join(val_data_root, f"interp_data_16_noise_{noise_str}_eval.h5")
+            val_pth = os.path.join(val_data_root, f"interp_data_16_noise_{noise_str}_eval")
         elif noise_level == -1: # full noise
-            val_pth = os.path.join(val_data_root, "interp_data_16_full_noise_eval.h5")
+            val_pth = os.path.join(val_data_root, "interp_data_16_full_noise_eval")
         else:
-            val_pth = os.path.join(val_data_root, "interp_data_16_eval.h5")
+            val_pth = os.path.join(val_data_root, "interp_data_16_eval")
+        
+        if args.target_model_name is not None:
+            val_pth += f"_{args.target_model_name}.h5"
+        else:
+            val_pth += ".h5"
 
         print("loading train dataset from ", train_pth)
         train_dataset = HDF5Dataset(train_pth, nested=joint_training)
@@ -415,7 +429,9 @@ def main(args):
             val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=True, collate_fn=custom_collate)
             
 
-        # Create model from config
+        # Create model from config, with overriden parameters if provided
+        config["model"]["use_gating"] = use_gating
+        print(f"Using gating: {use_gating}")
         model = create_model_from_config(config).to(device)
         
         # Load pretrained weights if provided
@@ -423,7 +439,31 @@ def main(args):
             model.load_state_dict(torch.load(model_save_path))
             print(f"Loaded pretrained weights from {model_save_path}")
 
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        if len(list(model.parameters())) > 0:
+            optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        else:
+            # we are training dummy model, so we don't need an optimizer
+            optimizer = None
+            # save and break
+            torch.save(model.state_dict(), model_save_path)
+            # Save configuration
+            with open(config_save_path, 'w') as f:
+                # Create a copy of the config with any command-line overrides
+                updated_config = copy.deepcopy(config)
+                if 'training' not in updated_config:
+                    updated_config['training'] = {}
+                updated_config['training']['learning_rate'] = learning_rate
+                updated_config['training']['batch_size'] = batch_size
+                updated_config['training']['num_epochs'] = num_epochs
+                updated_config['training']['dataset'] = dataset_name
+                updated_config['training']['algo'] = alg
+                updated_config['training']['model_name'] = model_name
+                updated_config['training']['sigma_1'] = sigma_1
+                updated_config['training']['sigma_2'] = sigma_2
+                updated_config['training']['noise_level'] = noise_level
+                json.dump(updated_config, f, indent=4)
+            print(f"Saved best model to {model_save_path} and config to {config_save_path}")
+            break
         loss_fn = LossFunction(sigma_1=sigma_1, sigma_2=sigma_2)
         # Training loop
         train_losses = []
@@ -558,5 +598,7 @@ if __name__ == "__main__":
     parser.add_argument("--sigma_2", type=float, help="Sigma_2 for the distance loss.")
     parser.add_argument("--tune", action="store_true", help="Whether to hyperparameter tune the model.")
     parser.add_argument("--noise_level", type=float, default=0.0, help= "The Gaussian noise level added to hidden states for the dataset for both training and evaluation. If this number is -1, then represents only noise for hidden states") # only implement for single training algorithm
+    parser.add_argument("--no_gating", action="store_true", help="Whether to not use gating in the GNN layers.")
+    parser.add_argument("--target_model_name", type=str, help="The name of the target model to use for interpretative analysis.")
     args = parser.parse_args()
     main(args)

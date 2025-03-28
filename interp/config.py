@@ -59,7 +59,7 @@ def create_model_from_config(config: Dict[str, Any]):
     Returns:
         Model instance
     """
-    from interp.models import InterpNetwork, GNNInterpNetwork, GNNJointInterpNetwork
+    from interp.models import InterpNetwork, GNNInterpNetwork, GNNJointInterpNetwork, DummyModel
     
     model_type = config.get('model_type', 'mlp_diff')
     model_config = config.get('model', {})
@@ -78,16 +78,8 @@ def create_model_from_config(config: Dict[str, Any]):
             dropout=model_config.get('dropout', 0.1),
             msg_dim=model_config.get('msg_dim', 128),
             proj_dim=model_config.get('proj_dim', 128),
-            edge_dim=model_config.get('edge_dim', 128)
-        )
-    elif model_type == 'transformer':
-        return TransformerInterpNetwork(
-            hidden_dim=model_config.get('hidden_dim', 128),
-            num_heads=model_config.get('num_heads', 4),
-            num_layers=model_config.get('num_layers', 2),
-            dropout=model_config.get('dropout', 0.1),
-            proj_dim=model_config.get('proj_dim', 128),
-            out_dim=model_config.get('out_dim', 128)
+            edge_dim=model_config.get('edge_dim', 128),
+            use_gating=model_config.get('use_gating', True)
         )
     elif model_type == 'gnn_joint':
         return GNNJointInterpNetwork(
@@ -97,7 +89,10 @@ def create_model_from_config(config: Dict[str, Any]):
             msg_dim=model_config.get('msg_dim', 128),
             proj_dim=model_config.get('proj_dim', 128),
             edge_dim=model_config.get('edge_dim', 128),
-            algorithms=training_config.get('algorithms', ["bellman_ford", "bfs"])
+            algorithms=training_config.get('algorithms', ["bellman_ford", "bfs"]),
+            use_gating=model_config.get('use_gating', True)
         )
+    elif model_type == 'dummy':
+        return DummyModel()
     else:
         raise ValueError(f"Unknown model type: {model_type}") 

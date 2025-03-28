@@ -8,19 +8,25 @@ set -e
 export PYTHONPATH=$PYTHONPATH:$(pwd)
 
 # Directory containing model configurations
-CONFIG_DIR="interp/configs/layers_gnn"
+CONFIG_DIR="interp/configs/mlp_all_alg"
 # Device to use (cuda or cpu)
 DEVICE="cpu"
 # Dataset to use
 DATASET="all"
 # Algorithm to use
-ALGO="bellman_ford"
+
 
 echo "Starting training and evaluation for all configs in $CONFIG_DIR"
 mkdir -p logs
 
 # Loop through all YAML files in the config directory
 for CONFIG_FILE in $CONFIG_DIR/*.yaml; do
+    # Extract algorithm from the config file
+    ALGO=$(grep "algo:" $CONFIG_FILE | awk '{print $2}' | tr -d '"')
+    if [ -z "$ALGO" ]; then
+        echo "Error: Could not extract algo from $CONFIG_FILE"
+        exit 1
+    fi
     # Extract the filename without path and extension for logging
     CONFIG_BASENAME=$(basename $CONFIG_FILE .yaml)
     

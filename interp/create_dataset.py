@@ -44,14 +44,17 @@ def save_to_hdf5(data, filename, nested=True):
                     # Store each array as a dataset within the group
                     group.create_dataset(key, data=array, compression="gzip")
 
-def get_model_params():
+def get_model_params(target_model_name=None):
     ## LOAD MODEL
-
+    if target_model_name is None:
+        processor_type = 'triplet_gmpnn'
+    else:
+        processor_type = target_model_name
     encode_hints = True
     decode_hints = True
 
     processor_factory = clrs.get_processor_factory(
-        'triplet_gmpnn',
+        processor_type,
         use_ln=True,
         nb_triplet_fts=8,
         nb_heads=1,
@@ -96,8 +99,8 @@ def unitise_edge_weights(edge_weights):
     new_edge_weights[new_edge_weights > 0] = 1.0
     return new_edge_weights
 
-def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
-    model_params = get_model_params()
+def create_joint_dataset(lengths, algorithms, num_samples_per_length, args, target_model_name=None):
+    model_params = get_model_params(target_model_name)
     data = {}
     rng = np.random.RandomState(42)
     rng_key = jax.random.PRNGKey(rng.randint(2**32, dtype=np.int64))
@@ -126,7 +129,10 @@ def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
                     sampler = SAMPLERS[algo](algorithm=algorithm_fn,spec=spec, length=length, num_samples=num_samples_per_length, from_graphs=from_graphs)
 
             # Get dummy trajectory and initialize model
-            weights_path = f'best_{algo}.pkl'
+            if target_model_name is None:
+                weights_path = f'best_{algo}.pkl'
+            else:
+                weights_path = f'best_{algo}_{target_model_name}.pkl'
             dummy_traj = [sampler.next()]
             model = load_model(model_params, dummy_traj, spec, weights_path)
             # Get predictions for this length
@@ -228,8 +234,8 @@ def create_joint_dataset(lengths, algorithms, num_samples_per_length, args):
 
     return data
 
-def create_individual_dataset(lengths, algo, num_samples_per_length, args):
-    model_params = get_model_params()
+def create_individual_dataset(lengths, algo, num_samples_per_length, args, target_model_name=None):
+    model_params = get_model_params(target_model_name)
     data = []
     rng = np.random.RandomState(42)
     rng_key = jax.random.PRNGKey(rng.randint(2**32, dtype=np.int64))
@@ -243,7 +249,10 @@ def create_individual_dataset(lengths, algo, num_samples_per_length, args):
         )
         # Get dummy trajectory and initialize model
         dummy_traj = [sampler.next()]
-        model = load_model(model_params, dummy_traj, spec, f'best_{algo}.pkl')
+        if target_model_name is None:
+            model = load_model(model_params, dummy_traj, spec, f'best_{algo}.pkl')
+        else:
+            model = load_model(model_params, dummy_traj, spec, f'best_{algo}_{target_model_name}.pkl')
 
         # Get predictions for this length
         feedback = sampler.next()
@@ -368,7 +377,7 @@ def main(args):
             assert algo in AVAILABLE_ALGORITHMS, f"Algorithm {algo} not in {AVAILABLE_ALGORITHMS}"
         
         # creating joint dataset
-        data = create_joint_dataset(lengths, algorithms, num_samples_per_length, args)
+        data = create_joint_dataset(lengths, algorithms, num_samples_per_length, args, target_model_name=args.target_model_name)
         # determine save path
         if args.sync:
             save_root = os.path.join("data", "_".join(algorithms) + "_sync")
@@ -381,7 +390,7 @@ def main(args):
     else:
         joint = False
         # create individual dataset
-        data = create_individual_dataset(lengths, args.algo, num_samples_per_length, args)
+        data = create_individual_dataset(lengths, args.algo, num_samples_per_length, args, target_model_name=args.target_model_name)
         save_root = os.path.join("data", args.algo)
         if not os.path.exists(save_root):
             os.makedirs(save_root)
@@ -389,16 +398,25 @@ def main(args):
     # split into train and test
     train_data, test_data = train_test_split(data, test_size=args.split, random_state=42)
     
+
     if args.noise_level > 0:
         noise_str = str(args.noise_level).replace('.', '_')
-        train_save_name = f"interp_data_{args.dataset}_noise_{noise_str}.h5"
-        val_save_name = f"interp_data_{args.dataset}_noise_{noise_str}_eval.h5"
+        train_save_name = f"interp_data_{args.dataset}_noise_{noise_str}"
+        val_save_name = f"interp_data_{args.dataset}_noise_{noise_str}_eval"
     elif args.noise_level == -1: # full noise
-        train_save_name = f"interp_data_{args.dataset}_full_noise.h5"
-        val_save_name = f"interp_data_{args.dataset}_full_noise_eval.h5"
+        train_save_name = f"interp_data_{args.dataset}_full_noise"
+        val_save_name = f"interp_data_{args.dataset}_full_noise_eval"
     else:
-        train_save_name = f"interp_data_{args.dataset}.h5"
-        val_save_name = f"interp_data_{args.dataset}_eval.h5"
+        train_save_name = f"interp_data_{args.dataset}"
+        val_save_name = f"interp_data_{args.dataset}_eval"
+
+    if args.target_model_name is not None:
+        train_save_name = f"{train_save_name}_{args.target_model_name}"
+        val_save_name = f"{val_save_name}_{args.target_model_name}"
+    
+    train_save_name = f"{train_save_name}.h5"
+    val_save_name = f"{val_save_name}.h5"
+
     train_save_path = os.path.join(save_root, train_save_name)
     val_save_path = os.path.join(save_root, val_save_name)
     
@@ -429,5 +447,6 @@ if __name__ == "__main__":
     parser.add_argument("--buffer", type=int, default=0, help= "Buffer size for how many trailing zeros for each algorithm.")
     parser.add_argument("--split", type=float, default=0.2, help= "The fraction of the dataset to use for testing.")
     parser.add_argument("--noise_level", type=float, default=0.0, help= "The Gaussian noise level added to hidden states for the dataset for both training and evaluation. If this number is -1, then represents only noise for hidden states") # only implement for single training algorithm
+    parser.add_argument("--target_model_name", type=str, default=None, help= "The name of the target model to use for the dataset. If this is not specified, then the best model for the given algorithm will be used.")
     args = parser.parse_args()
     main(args)

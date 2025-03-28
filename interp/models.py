@@ -263,7 +263,7 @@ class InterpNetwork(nn.Module):
         return class_out, dist_out
 
 class GNNInterpNetwork(nn.Module):
-    def __init__(self, hidden_dim: int, proj_dim: int = 128, msg_dim: int = 128, edge_dim: int = 16, gnn_layers: int = 1, dropout: float = 0.1):
+    def __init__(self, hidden_dim: int, proj_dim: int = 128, msg_dim: int = 128, edge_dim: int = 16, gnn_layers: int = 1, dropout: float = 0.1, use_gating: bool = True):
         super().__init__()
         self.node_dim = hidden_dim
         
@@ -288,7 +288,7 @@ class GNNInterpNetwork(nn.Module):
         
         # Message passing layers
         self.gnn_layers = nn.ModuleList([
-            GNNLayer(self.proj_dim, self.edge_dim, self.msg_dim) 
+            GNNLayer(self.proj_dim, self.edge_dim, self.msg_dim, use_gating=use_gating) 
             for _ in range(gnn_layers)
         ])
         
@@ -414,9 +414,10 @@ class GNNInterpNetwork(nn.Module):
 class GNNLayer(nn.Module):
     """Graph Neural Network layer implementing message passing"""
     
-    def __init__(self, node_dim, edge_dim, msg_out_dim, self_connection: bool = True):
+    def __init__(self, node_dim, edge_dim, msg_out_dim, self_connection: bool = True, use_gating: bool = True):
         super().__init__()
         self.self_connection = self_connection
+        self.use_gating = use_gating
         # Message function (combines source node and edge features)
         self.message_fn = nn.Sequential(
             nn.Linear(node_dim + edge_dim, msg_out_dim),
@@ -479,15 +480,18 @@ class GNNLayer(nn.Module):
         updated = self.update_fn(concat_features)  # (N, out_dim)
         
         # Apply gating mechanism
-        gate_values = self.gate(concat_features)  # (N, out_dim)
+        if self.use_gating:
+            gate_values = self.gate(concat_features)  # (N, out_dim)
         
-        # Residual connection with gating
-        outputs = gate_values * updated + (1 - gate_values) * node_features[:, :updated.size(1)]
+            # Residual connection with gating
+            outputs = gate_values * updated + (1 - gate_values) * node_features[:, :updated.size(1)]
+        else:
+            outputs = updated
         
         return outputs
 
 class GNNJointInterpNetwork(nn.Module):
-    def __init__(self, hidden_dim: int, proj_dim: int = 128, msg_dim: int = 128, edge_dim: int = 16, gnn_layers: int = 1, dropout: float = 0.1, algorithms: list = ["bellman_ford"]):
+    def __init__(self, hidden_dim: int, proj_dim: int = 128, msg_dim: int = 128, edge_dim: int = 16, gnn_layers: int = 1, dropout: float = 0.1, algorithms: list = ["bellman_ford"], use_gating: bool = True):
         super().__init__()
         self.node_dim = hidden_dim
         
@@ -512,7 +516,7 @@ class GNNJointInterpNetwork(nn.Module):
         
         # Message passing layers
         self.gnn_layers = nn.ModuleList([
-            GNNLayer(self.proj_dim, self.edge_dim, self.msg_dim) 
+            GNNLayer(self.proj_dim, self.edge_dim, self.msg_dim, use_gating=use_gating) 
             for _ in range(gnn_layers)
         ])
         

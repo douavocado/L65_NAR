@@ -1663,7 +1663,11 @@ def visualize_temporal_performance(model, dataloader, sigma_1, sigma_2=None, dev
             loss_matrix = np.zeros((num_nodes, num_timesteps))
             correct_matrix = np.zeros((num_nodes, num_timesteps))
             
-            # Fill matrices
+            # Calculate average loss and accuracy over time
+            avg_loss = np.zeros(num_timesteps)
+            avg_accuracy = np.zeros(num_timesteps)
+            
+            # Fill matrices and calculate averages
             for t in range(num_timesteps):
                 for n in range(num_nodes):
                     # Compute loss for this node at this time
@@ -1678,12 +1682,24 @@ def visualize_temporal_performance(model, dataloader, sigma_1, sigma_2=None, dev
                     
                     loss_matrix[n, t] = total_loss.item()
                     correct_matrix[n, t] = 1 if class_preds[t, n] == class_targets[t, n] else 0
+                
+                # Calculate averages for this timestep
+                avg_loss[t] = np.mean(loss_matrix[:, t])
+                avg_accuracy[t] = np.mean(correct_matrix[:, t])
             
             # Calculate overall accuracy for title
             accuracy = np.mean(correct_matrix)
             
-            # Create figure with two subplots
-            fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 8))
+            # Create figure with four subplots (2x2 grid)
+            fig = plt.figure(figsize=(18, 16))
+            gs = fig.add_gridspec(2, 2, height_ratios=[1, 1])
+            
+            # Create subplots
+            ax1 = fig.add_subplot(gs[0, 0])
+            ax2 = fig.add_subplot(gs[0, 1])
+            ax3 = fig.add_subplot(gs[1, 0])
+            ax4 = fig.add_subplot(gs[1, 1])
+            
             fig.suptitle(f"Temporal Performance - Graph {i}", fontsize=16)
             all_figures.append(fig)
             
@@ -1698,6 +1714,21 @@ def visualize_temporal_performance(model, dataloader, sigma_1, sigma_2=None, dev
             ax2.set_title(f"Prediction Correctness (Accuracy: {accuracy:.2f})", fontsize=14)
             ax2.set_xlabel("Time Step", fontsize=12)
             ax2.set_ylabel("Node ID", fontsize=12)
+            
+            # Plot average loss over time
+            ax3.plot(range(num_timesteps), avg_loss, 'b-', linewidth=2)
+            ax3.set_title("Average Loss over Time", fontsize=14)
+            ax3.set_xlabel("Time Step", fontsize=12)
+            ax3.set_ylabel("Average Loss", fontsize=12)
+            ax3.grid(True, linestyle='--', alpha=0.7)
+            
+            # Plot average accuracy over time
+            ax4.plot(range(num_timesteps), avg_accuracy, 'g-', linewidth=2)
+            ax4.set_title("Average Accuracy over Time", fontsize=14)
+            ax4.set_xlabel("Time Step", fontsize=12)
+            ax4.set_ylabel("Average Accuracy", fontsize=12)
+            ax4.grid(True, linestyle='--', alpha=0.7)
+            ax4.set_ylim(0, 1)  # Set y-axis limits for accuracy
             
             # Dynamically adjust tick spacing based on matrix size
             def get_tick_spacing(size):
@@ -1716,20 +1747,24 @@ def visualize_temporal_performance(model, dataloader, sigma_1, sigma_2=None, dev
             x_spacing = get_tick_spacing(num_timesteps)
             x_ticks = np.arange(0, num_timesteps, x_spacing)
             x_labels = [str(t) for t in x_ticks]
+            
             # Y-axis (nodes) ticks
             y_spacing = get_tick_spacing(num_nodes)
             y_ticks = np.arange(0, num_nodes, y_spacing)
             y_labels = [str(n) for n in y_ticks]  # Show actual node IDs
             
-            # Apply ticks to both axes
+            # Apply ticks to heatmap axes
             for ax in [ax1, ax2]:
                 ax.set_xticks(x_ticks)
                 ax.set_xticklabels(x_labels)
                 ax.set_yticks(y_ticks)
                 ax.set_yticklabels(y_labels)
-                
-                # Remove grid
                 ax.grid(False)
+            
+            # Apply ticks to line plot axes
+            for ax in [ax3, ax4]:
+                ax.set_xticks(x_ticks)
+                ax.set_xticklabels(x_labels)
             
             # Add colorbars
             fig.colorbar(im1, ax=ax1, label="Loss Value")
